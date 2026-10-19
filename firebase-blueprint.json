@@ -1,0 +1,72 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role-based access control details",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID of the user" },
+        "name": { "type": "string", "description": "Full name of the user" },
+        "email": { "type": "string", "format": "email", "description": "Email address" },
+        "phone": { "type": "string", "description": "Contact telephone number" },
+        "role": {
+          "type": "string",
+          "enum": ["ADMIN", "OM", "SUPERVISION", "TECHNICIAN", "DISPATCHER", "ACQUISITION"],
+          "description": "Assigned operational role"
+        },
+        "department": { "type": "string", "description": "Department or business unit" },
+        "region": { "type": "string", "description": "Operational region" },
+        "isActive": { "type": "boolean", "description": "Whether user account is active" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of record creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["uid", "name", "email", "role", "isActive"]
+    },
+    "MailConfig": {
+      "title": "MailConfig",
+      "description": "Global SMTP sender and recipient group email routing",
+      "type": "object",
+      "properties": {
+        "senderEmail": { "type": "string", "format": "email", "description": "Zoho sender email" },
+        "senderName": { "type": "string", "description": "Session sender display name" },
+        "toGroup": { "type": "string", "description": "Comma-separated list of recipient emails" },
+        "ccGroup": { "type": "string", "description": "Comma-separated list of CC emails" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last configuration update" },
+        "updatedBy": { "type": "string", "description": "UID of admin who updated the configuration" }
+      },
+      "required": ["senderEmail", "senderName", "toGroup", "ccGroup"]
+    },
+    "SiteReport": {
+      "title": "SiteReport",
+      "description": "Logged site audit report with GPS telemetry and status",
+      "type": "object",
+      "properties": {
+        "siteId": { "type": "string", "description": "Telecom site code identifier" },
+        "siteName": { "type": "string", "description": "Site name" },
+        "status": { "type": "string", "description": "Audit access status: ACCORDED or REFUSED" },
+        "technicianName": { "type": "string", "description": "Name of technician logging the report" },
+        "technicianPhone": { "type": "string", "description": "Technician contact number" },
+        "technicianUid": { "type": "string", "description": "UID of user who filed the audit" },
+        "latitude": { "type": "number", "description": "GPS latitude in decimal degrees" },
+        "longitude": { "type": "number", "description": "GPS longitude in decimal degrees" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of audit submission" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["siteId", "siteName", "status", "technicianUid"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and RBAC role assignments"
+    },
+    "/mail_config/{configId}": {
+      "schema": "MailConfig",
+      "description": "Email dispatch sender and recipient group configurations"
+    },
+    "/site_reports/{reportId}": {
+      "schema": "SiteReport",
+      "description": "Audited site reports with GPS coordinates, timestamps, and status"
+    }
+  }
+}

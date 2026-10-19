@@ -5,14 +5,18 @@ import android.content.Context
 import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.auth.UserSessionManager
 import com.example.camera.WatermarkHelper
 import com.example.data.db.AppDatabase
+import com.example.data.model.FirestoreUser
 import com.example.data.model.GpsData
 import com.example.data.model.GsmData
 import com.example.data.model.SiteAccessStatus
 import com.example.data.model.SitePhoto
 import com.example.data.model.SiteReportEntity
 import com.example.data.model.UserEntity
+import com.example.data.model.UserRole
+import com.example.data.remote.FirestoreRepository
 import com.example.email.EmailHelper
 import com.example.email.ZohoSmtpClient
 import com.example.location.GpsManager
@@ -23,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -35,6 +40,13 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     private val gpsManager = GpsManager(application)
     private val gsmManager = GsmManager(application)
     val networkMonitor = NetworkMonitor(application)
+
+    val firestoreRepository = FirestoreRepository(application)
+    val sessionManager = UserSessionManager(application, firestoreRepository, viewModelScope)
+
+    val currentUser = sessionManager.currentUser
+    val currentProfile = sessionManager.currentProfile
+    val currentRole = sessionManager.currentRole
 
     private val prefs = application.getSharedPreferences("mobiserve_settings", Context.MODE_PRIVATE)
 
@@ -212,6 +224,35 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                 wasOffline = !online
             }
         }
+
+        // Synchronize admin permissions with signed-in RBAC role
+        viewModelScope.launch {
+            currentRole.collectLatest { role ->
+                if (role == UserRole.ADMIN) {
+                    isAdminUnlocked.value = true
+                }
+            }
+        }
+
+        // Observe cloud mail configuration and sync to session state
+        viewModelScope.launch {
+            currentUser.collectLatest { user ->
+                if (user != null) {
+                    try {
+                        firestoreRepository.observeMailConfig().collectLatest { config ->
+                            if (config != null) {
+                                if (config.senderEmail.isNotBlank()) zohoSenderEmail.value = config.senderEmail
+                                if (config.senderName.isNotBlank()) sessionSenderName.value = config.senderName
+                                if (config.toGroup.isNotBlank()) recipientEmail.value = config.toGroup
+                                if (config.ccGroup.isNotBlank()) ccRecipientsEmail.value = config.ccGroup
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore unauthenticated initial flow
+                    }
+                }
+            }
+        }
     }
 
     fun setSiteId(value: String) { siteId.value = value }
@@ -264,6 +305,22 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     fun setZohoPort(value: Int) {
         zohoPort.value = value
         prefs.edit().putInt("zoho_port", value).apply()
+    }
+
+    fun saveMailSettingsToCloud() {
+        viewModelScope.launch {
+            try {
+                firestoreRepository.saveMailConfig(
+                    senderEmail = zohoSenderEmail.value,
+                    senderName = sessionSenderName.value,
+                    toGroup = recipientEmail.value,
+                    ccGroup = ccRecipientsEmail.value
+                )
+                _userMessage.value = "Mail routing & sender configuration saved to cloud database!"
+            } catch (e: Exception) {
+                _userMessage.value = "Settings saved locally (${e.localizedMessage})"
+            }
+        }
     }
 
     fun unlockAdmin(pin: String): Boolean {
@@ -349,7 +406,23 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                 department = department.ifBlank { "Field Services" },
                 region = region.ifBlank { "National" }
             )
-            userDao.insertUser(user)
+            val id = userDao.insertUser(user)
+            try {
+                firestoreRepository.saveUser(
+                    FirestoreUser(
+                        uid = "user_${id}_${System.currentTimeMillis()}",
+                        name = user.name,
+                        email = user.email,
+                        phone = user.phone,
+                        role = user.role,
+                        department = user.department,
+                        region = user.region,
+                        isActive = true
+                    )
+                )
+            } catch (e: Exception) {
+                // Saved in local database
+            }
             _userMessage.value = "User '${user.name}' created with role ${user.role}."
         }
     }
@@ -357,6 +430,22 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     fun updateUser(user: UserEntity) {
         viewModelScope.launch {
             userDao.updateUser(user)
+            try {
+                firestoreRepository.saveUser(
+                    FirestoreUser(
+                        uid = "user_${user.id}",
+                        name = user.name,
+                        email = user.email,
+                        phone = user.phone,
+                        role = user.role,
+                        department = user.department,
+                        region = user.region,
+                        isActive = user.isActive
+                    )
+                )
+            } catch (e: Exception) {
+                // Saved in local database
+            }
             _userMessage.value = "User '${user.name}' updated."
         }
     }
@@ -364,6 +453,11 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     fun deleteUser(user: UserEntity) {
         viewModelScope.launch {
             userDao.deleteUser(user)
+            try {
+                firestoreRepository.deleteUser("user_${user.id}")
+            } catch (e: Exception) {
+                // Removed from local database
+            }
             _userMessage.value = "User '${user.name}' removed."
         }
     }
