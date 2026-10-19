@@ -1,0 +1,6 @@
+{
+  "name": "Telecom Site Access",
+  "description": "Telecom field site access audit and photo logging with real-time GPS coordinates, GSM cell network metrics, and instant email reporting to Zoho Mail.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

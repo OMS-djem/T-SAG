@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Telecom Site Access</string>
+    <string name="company_name">Mobiserve Holding</string>
+    <string name="zoho_email">mdjemil@mobiserveholding.com</string>
+    <string name="site_id_label">Site ID / Name</string>
+    <string name="operator_label">Network Operator</string>
+    <string name="status_accorded">Access Accorded</string>
+    <string name="status_refused">No Access</string>
+    <string name="take_photo">Capture Site Photo</string>
+    <string name="send_report">Send Report Email</string>
+</resources>
