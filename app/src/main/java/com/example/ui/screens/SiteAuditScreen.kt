@@ -66,6 +66,7 @@ fun SiteAuditScreen(
     val technicianName by viewModel.technicianName.collectAsState()
     val technicianPhone by viewModel.technicianPhone.collectAsState()
     val recipientEmail by viewModel.recipientEmail.collectAsState()
+    val ccRecipientsEmail by viewModel.ccRecipientsEmail.collectAsState()
 
     val zohoSenderEmail by viewModel.zohoSenderEmail.collectAsState()
     val zohoPassword by viewModel.zohoPassword.collectAsState()
@@ -218,6 +219,7 @@ fun SiteAuditScreen(
         PhotoEvidenceSection(
             photos = photos,
             isProcessing = isProcessingPhoto,
+            onOpenCamera = { tag -> viewModel.openCamera(tag) },
             onPhotoCaptured = { bitmap, tag -> viewModel.addPhotoBitmap(bitmap, tag) },
             onSimulatePhoto = { tag -> viewModel.addSimulatedPhoto(tag) },
             onDeletePhoto = { photo -> viewModel.removePhoto(photo) }
@@ -230,6 +232,8 @@ fun SiteAuditScreen(
             senderEmail = zohoSenderEmail,
             recipientEmail = recipientEmail,
             onRecipientChanged = { viewModel.setRecipientEmail(it) },
+            ccEmail = ccRecipientsEmail,
+            onCcChanged = { viewModel.setCcRecipientsEmail(it) },
             status = status,
             subject = viewModel.getPreparedSubject(),
             body = viewModel.getPreparedBody(),
@@ -247,6 +251,7 @@ fun SiteAuditScreen(
     if (showPreview) {
         EmailPreviewDialog(
             recipient = recipientEmail,
+            cc = ccRecipientsEmail,
             subject = viewModel.getPreparedSubject(),
             body = viewModel.getPreparedBody(),
             status = status,

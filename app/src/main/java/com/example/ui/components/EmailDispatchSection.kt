@@ -61,6 +61,8 @@ fun EmailDispatchSection(
     senderEmail: String,
     recipientEmail: String,
     onRecipientChanged: (String) -> Unit,
+    ccEmail: String = "",
+    onCcChanged: ((String) -> Unit)? = null,
     status: SiteAccessStatus,
     subject: String,
     body: String,
@@ -228,6 +230,45 @@ fun EmailDispatchSection(
                         shape = RoundedCornerShape(8.dp),
                         singleLine = true
                     )
+
+                    // Carbon Copy Group
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(AccessAccordedGreen)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "CC (CARBON COPY GROUP):",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            letterSpacing = 0.8.sp
+                        )
+                    }
+
+                    if (onCcChanged != null) {
+                        OutlinedTextField(
+                            value = ccEmail,
+                            onValueChange = onCcChanged,
+                            placeholder = { Text("supervision@mobiserveholding.com, om@mobiserveholding.com") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            singleLine = true
+                        )
+                    } else if (ccEmail.isNotBlank()) {
+                        Text(
+                            text = ccEmail,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = TelecomNavyPrimary,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
             }
 

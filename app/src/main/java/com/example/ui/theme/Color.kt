@@ -17,6 +17,9 @@ val AccessRefusedRed = Color(0xFFDC2626)
 val AccessRefusedRedLight = Color(0xFFEF4444)
 val AccessRefusedRedBg = Color(0xFFFEF2F2)
 
+val TelecomGreen = AccessAccordedGreen
+val TelecomRed = AccessRefusedRed
+
 // Neutral & Backgrounds
 val SurfaceLight = Color(0xFFF8FAFC)
 val SurfaceDark = Color(0xFF0F172A)

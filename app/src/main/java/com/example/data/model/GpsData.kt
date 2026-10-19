@@ -9,6 +9,6 @@ data class GpsData(
     val address: String = "Detecting location..."
 ) {
     val isValid: Boolean get() = latitude != 0.0 || longitude != 0.0
-    val coordinatesString: String get() = String.format("%.6f, %.6f", latitude, longitude)
+    val coordinatesString: String get() = String.format(java.util.Locale.US, "%.6f, %.6f", latitude, longitude)
     val mapsUrl: String get() = "https://maps.google.com/?q=$latitude,$longitude"
 }

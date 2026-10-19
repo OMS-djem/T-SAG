@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.ui.screens.CameraScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SiteAuditScreen
@@ -67,13 +68,20 @@ class MainActivity : ComponentActivity() {
                 var currentTab by remember { mutableStateOf(AppTab.AUDIT) }
                 val historyReports by viewModel.historyReports.collectAsState()
                 val pendingCount by viewModel.pendingCount.collectAsState()
+                val isCameraOpen by viewModel.isCameraOpen.collectAsState()
 
-                BackHandler(enabled = currentTab != AppTab.AUDIT) {
-                    currentTab = AppTab.AUDIT
-                }
+                if (isCameraOpen) {
+                    CameraScreen(
+                        viewModel = viewModel,
+                        onClose = { viewModel.closeCamera() }
+                    )
+                } else {
+                    BackHandler(enabled = currentTab != AppTab.AUDIT) {
+                        currentTab = AppTab.AUDIT
+                    }
 
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
+                    Scaffold(
+                        modifier = Modifier.fillMaxSize(),
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     topBar = {
                         TopAppBar(
@@ -187,6 +195,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                }
                 }
             }
         }

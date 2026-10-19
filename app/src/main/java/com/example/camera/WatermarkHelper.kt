@@ -38,10 +38,10 @@ object WatermarkHelper {
         val width = workingBitmap.width.toFloat()
         val height = workingBitmap.height.toFloat()
 
-        // Scaled dimensions relative to image width
-        val baseTextSize = (width * 0.026f).coerceIn(24f, 44f)
+        // Scaled dimensions relative to image width for crisp readability across all resolutions
+        val baseTextSize = (width * 0.024f).coerceIn(24f, 64f)
         val titleTextSize = baseTextSize * 1.25f
-        val padding = width * 0.035f
+        val padding = (width * 0.032f).coerceIn(16f, 48f)
 
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
         val timeString = dateFormat.format(Date())

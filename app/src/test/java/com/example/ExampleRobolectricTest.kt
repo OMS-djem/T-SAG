@@ -124,4 +124,63 @@ class ExampleRobolectricTest {
     val syncedReport = dao.getReportById(id)
     assertEquals("SYNCED", syncedReport?.syncStatus)
   }
+
+  @Test
+  fun testWatermarkHelperCreatesValidStampedPhoto() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val testBitmap = android.graphics.Bitmap.createBitmap(800, 600, android.graphics.Bitmap.Config.ARGB_8888)
+    val gps = GpsData(latitude = 36.7538, longitude = 3.0588, altitude = 50.0, accuracy = 4.2f)
+    val gsm = GsmData(operatorName = "Djezzy", networkType = "LTE 4G", cellId = "48192", lacTac = "1042")
+
+    val file = com.example.camera.WatermarkHelper.createStampedPhoto(
+      context = context,
+      sourceBitmap = testBitmap,
+      siteId = "MOB-DZ-1044",
+      operator = "Djezzy",
+      status = SiteAccessStatus.ACCORDED,
+      gps = gps,
+      gsm = gsm,
+      tag = "Site Entrance"
+    )
+
+    assertTrue(file.exists())
+    assertTrue(file.length() > 0)
+    assertTrue(file.name.startsWith("IMG_SITE_"))
+    assertTrue(file.name.endsWith(".jpg"))
+  }
+
+  @Test
+  fun testUserCrudAndRoles() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = AppDatabase.getDatabase(context)
+    val userDao = db.userDao()
+
+    val testUser = com.example.data.model.UserEntity(
+      name = "NOC Supervisor",
+      email = "supervisor@mobiserveholding.com",
+      phone = "+213 550 99 88 77",
+      role = "SUPERVISION",
+      department = "NOC",
+      region = "National"
+    )
+
+    val id = userDao.insertUser(testUser)
+    assertTrue(id > 0)
+
+    val fetched = userDao.getUserById(id)
+    assertEquals("NOC Supervisor", fetched?.name)
+    assertEquals("SUPERVISION", fetched?.role)
+    assertEquals(com.example.data.model.UserRole.SUPERVISION, fetched?.roleEnum)
+
+    // Update
+    val updated = fetched!!.copy(role = "OM", department = "Operations & Maintenance")
+    userDao.updateUser(updated)
+    val fetchedAfterUpdate = userDao.getUserById(id)
+    assertEquals("OM", fetchedAfterUpdate?.role)
+
+    // Delete
+    userDao.deleteUser(fetchedAfterUpdate!!)
+    val fetchedAfterDelete = userDao.getUserById(id)
+    assertTrue(fetchedAfterDelete == null)
+  }
 }

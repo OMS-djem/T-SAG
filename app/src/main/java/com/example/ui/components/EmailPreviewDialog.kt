@@ -54,6 +54,7 @@ import java.io.File
 @Composable
 fun EmailPreviewDialog(
     recipient: String,
+    cc: String = "",
     subject: String,
     body: String,
     status: SiteAccessStatus,
@@ -119,6 +120,14 @@ fun EmailPreviewDialog(
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold
                         )
+                        if (cc.isNotBlank()) {
+                            Text(
+                                text = "Cc: $cc (Carbon Copy)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = AccessAccordedGreen,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                         Text(
                             text = "Subject: $subject",
                             style = MaterialTheme.typography.bodySmall,

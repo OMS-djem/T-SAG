@@ -96,6 +96,16 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     private val _isProcessingPhoto = MutableStateFlow(false)
     val isProcessingPhoto: StateFlow<Boolean> = _isProcessingPhoto.asStateFlow()
 
+    // CameraX Dedicated Screen State
+    private val _isCameraOpen = MutableStateFlow(false)
+    val isCameraOpen: StateFlow<Boolean> = _isCameraOpen.asStateFlow()
+
+    private val _activeCameraTag = MutableStateFlow("Site Entrance")
+    val activeCameraTag: StateFlow<String> = _activeCameraTag.asStateFlow()
+
+    private val _lastCapturedPhoto = MutableStateFlow<SitePhoto?>(null)
+    val lastCapturedPhoto: StateFlow<SitePhoto?> = _lastCapturedPhoto.asStateFlow()
+
     // Status Message / Toast
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage: StateFlow<String?> = _userMessage.asStateFlow()
@@ -268,6 +278,66 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
         isAdminUnlocked.value = false
     }
 
+    fun addEmailToRecipientGroup(email: String) {
+        val current = recipientEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+        if (!current.contains(email.trim())) {
+            current.add(email.trim())
+            setRecipientEmail(current.joinToString(", "))
+            _userMessage.value = "Added $email to TO Mail Group"
+        } else {
+            _userMessage.value = "$email is already in TO Mail Group"
+        }
+    }
+
+    fun addEmailToCcGroup(email: String) {
+        val current = ccRecipientsEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+        if (!current.contains(email.trim())) {
+            current.add(email.trim())
+            setCcRecipientsEmail(current.joinToString(", "))
+            _userMessage.value = "Added $email to CC Mail Group"
+        } else {
+            _userMessage.value = "$email is already in CC Mail Group"
+        }
+    }
+
+    fun addRoleEmailsToCcGroup(roleCode: String) {
+        val users = allUsers.value
+        val roleEmails = users.filter { it.role.equals(roleCode, ignoreCase = true) }.map { it.email.trim() }
+        val current = ccRecipientsEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+        var addedCount = 0
+        roleEmails.forEach { email ->
+            if (email.isNotBlank() && !current.contains(email)) {
+                current.add(email)
+                addedCount++
+            }
+        }
+        if (addedCount > 0) {
+            setCcRecipientsEmail(current.joinToString(", "))
+            _userMessage.value = "Added $addedCount $roleCode user(s) to CC Group"
+        } else {
+            _userMessage.value = "All active $roleCode users are already in CC Group"
+        }
+    }
+
+    fun addRoleEmailsToToGroup(roleCode: String) {
+        val users = allUsers.value
+        val roleEmails = users.filter { it.role.equals(roleCode, ignoreCase = true) }.map { it.email.trim() }
+        val current = recipientEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+        var addedCount = 0
+        roleEmails.forEach { email ->
+            if (email.isNotBlank() && !current.contains(email)) {
+                current.add(email)
+                addedCount++
+            }
+        }
+        if (addedCount > 0) {
+            setRecipientEmail(current.joinToString(", "))
+            _userMessage.value = "Added $addedCount $roleCode user(s) to TO Group"
+        } else {
+            _userMessage.value = "All active $roleCode users are already in TO Group"
+        }
+    }
+
     // User CRUD Operations
     fun createUser(name: String, email: String, phone: String, role: String, department: String, region: String) {
         viewModelScope.launch {
@@ -307,6 +377,19 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     fun dismissUserMessage() { _userMessage.value = null }
     fun setShowEmailPreview(show: Boolean) { _showEmailPreview.value = show }
     fun setShowSendResultDialog(show: Boolean) { _showSendResultDialog.value = show }
+
+    fun openCamera(tag: String = "Site Entrance") {
+        _activeCameraTag.value = tag
+        _isCameraOpen.value = true
+    }
+
+    fun closeCamera() {
+        _isCameraOpen.value = false
+    }
+
+    fun setActiveCameraTag(tag: String) {
+        _activeCameraTag.value = tag
+    }
 
     fun refreshLocation() {
         viewModelScope.launch {
@@ -360,6 +443,7 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                     cellId = _gsmData.value.cellId
                 )
                 _photos.value = _photos.value + newPhoto
+                _lastCapturedPhoto.value = newPhoto
                 _userMessage.value = "Photo captured & geo-stamped successfully!"
             } catch (e: Exception) {
                 _userMessage.value = "Error stamping photo: ${e.localizedMessage}"
@@ -392,6 +476,7 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                     cellId = _gsmData.value.cellId
                 )
                 _photos.value = _photos.value + newPhoto
+                _lastCapturedPhoto.value = newPhoto
                 _userMessage.value = "Field inspection photo stamped ($tag)"
             } catch (e: Exception) {
                 _userMessage.value = "Error adding photo: ${e.localizedMessage}"

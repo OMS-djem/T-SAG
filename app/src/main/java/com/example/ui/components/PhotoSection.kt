@@ -65,6 +65,7 @@ import java.io.File
 fun PhotoEvidenceSection(
     photos: List<SitePhoto>,
     isProcessing: Boolean,
+    onOpenCamera: (String) -> Unit,
     onPhotoCaptured: (Bitmap, String) -> Unit,
     onSimulatePhoto: (String) -> Unit,
     onDeletePhoto: (SitePhoto) -> Unit,
@@ -153,7 +154,7 @@ fun PhotoEvidenceSection(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
-                    onClick = { cameraLauncher.launch(null) },
+                    onClick = { onOpenCamera(selectedTag) },
                     modifier = Modifier
                         .weight(1f)
                         .testTag("open_camera_button"),
@@ -162,11 +163,11 @@ fun PhotoEvidenceSection(
                 ) {
                     Icon(
                         imageVector = Icons.Default.CameraAlt,
-                        contentDescription = "Take Photo",
+                        contentDescription = "Take Photo with CameraX",
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Take Photo", fontSize = 13.sp)
+                    Text("Take Photo (CameraX)", fontSize = 13.sp)
                 }
 
                 OutlinedButton(

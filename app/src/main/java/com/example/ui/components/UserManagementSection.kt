@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -74,6 +75,8 @@ fun UserManagementSection(
     onUpdateUser: (UserEntity) -> Unit,
     onDeleteUser: (UserEntity) -> Unit,
     onSelectTechnician: (UserEntity) -> Unit,
+    onAddToToGroup: ((String) -> Unit)? = null,
+    onAddToCcGroup: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -204,7 +207,9 @@ fun UserManagementSection(
                         user = user,
                         onEdit = { userToEdit = user },
                         onDelete = { userToDelete = user },
-                        onSelectTechnician = { onSelectTechnician(user) }
+                        onSelectTechnician = { onSelectTechnician(user) },
+                        onAddToToGroup = onAddToToGroup,
+                        onAddToCcGroup = onAddToCcGroup
                     )
                 }
             }
@@ -285,7 +290,9 @@ private fun UserCardItem(
     user: UserEntity,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onSelectTechnician: () -> Unit
+    onSelectTechnician: () -> Unit,
+    onAddToToGroup: ((String) -> Unit)? = null,
+    onAddToCcGroup: ((String) -> Unit)? = null
 ) {
     val roleColor = getRoleBadgeColor(user.role)
 
@@ -371,20 +378,55 @@ private fun UserCardItem(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Actions row: Set Active Tech, Edit, Delete
+            // Actions row: Quick Mail Group Assignment, Set Active Tech, Edit, Delete
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
-                    onClick = onSelectTechnician,
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.height(28.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(imageVector = Icons.Default.HowToReg, contentDescription = null, modifier = Modifier.size(12.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Set Active Field Tech", fontSize = 10.sp)
+                    OutlinedButton(
+                        onClick = onSelectTechnician,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.height(28.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.HowToReg, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Active Tech", fontSize = 10.sp)
+                    }
+
+                    if (onAddToToGroup != null) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = TelecomNavyPrimary.copy(alpha = 0.1f),
+                            modifier = Modifier
+                                .height(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { onAddToToGroup(user.email) }
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+                                Text("+ TO Group", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = TelecomNavyPrimary)
+                            }
+                        }
+                    }
+
+                    if (onAddToCcGroup != null) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = AccessAccordedGreen.copy(alpha = 0.12f),
+                            modifier = Modifier
+                                .height(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { onAddToCcGroup(user.email) }
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 8.dp)) {
+                                Text("+ CC Group", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = AccessAccordedGreen)
+                            }
+                        }
+                    }
                 }
 
                 Row {
