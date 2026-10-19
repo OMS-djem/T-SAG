@@ -22,6 +22,9 @@ import com.example.email.ZohoSmtpClient
 import com.example.location.GpsManager
 import com.example.network.NetworkMonitor
 import com.example.security.SecurityHelper
+import com.example.supabase.SupabaseConfig
+import com.example.supabase.SupabaseProfile
+import com.example.supabase.SupabaseSiteReport
 import com.example.telephony.GsmManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -148,6 +151,19 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     val allUsers: StateFlow<List<UserEntity>> = userDao.getAllUsers()
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    val pendingUsers: StateFlow<List<UserEntity>> = userDao.getPendingUsers()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val pendingUserCount: StateFlow<Int> = userDao.getPendingUserCount()
+        .stateIn(viewModelScope, SharingStarted.Lazily, 0)
+
+    // Supabase Syncing States
+    private val _isSyncingSupabase = MutableStateFlow(false)
+    val isSyncingSupabase: StateFlow<Boolean> = _isSyncingSupabase.asStateFlow()
+
+    private val _supabaseStatusMessage = MutableStateFlow<String?>(null)
+    val supabaseStatusMessage: StateFlow<String?> = _supabaseStatusMessage.asStateFlow()
+
     // History from Room
     val historyReports: StateFlow<List<SiteReportEntity>> = dao.getAllReports()
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
@@ -249,6 +265,52 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                         }
                     } catch (e: Exception) {
                         // Ignore unauthenticated initial flow
+                    }
+                }
+            }
+        }
+
+        // Real-time synchronization of Firestore User Directory into Room
+        viewModelScope.launch {
+            currentUser.collectLatest { user ->
+                if (user != null) {
+                    try {
+                        firestoreRepository.observeUsers().collectLatest { cloudUsers ->
+                            for (cu in cloudUsers) {
+                                if (cu.email.isNotBlank()) {
+                                    val localUsers = allUsers.value
+                                    val match = localUsers.find { it.email.equals(cu.email.trim(), ignoreCase = true) }
+                                    if (match != null) {
+                                        if (match.role != cu.role || match.name != cu.name || match.phone != cu.phone || match.department != cu.department || match.region != cu.region || match.isActive != cu.isActive) {
+                                            userDao.updateUser(
+                                                match.copy(
+                                                    name = cu.name,
+                                                    phone = cu.phone,
+                                                    role = cu.role,
+                                                    department = cu.department,
+                                                    region = cu.region,
+                                                    isActive = cu.isActive
+                                                )
+                                            )
+                                        }
+                                    } else {
+                                        userDao.insertUser(
+                                            UserEntity(
+                                                name = cu.name.ifBlank { cu.email.substringBefore("@") },
+                                                email = cu.email.trim(),
+                                                phone = cu.phone,
+                                                role = cu.role,
+                                                department = cu.department,
+                                                region = cu.region,
+                                                isActive = cu.isActive
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore if rules restriction or offline
                     }
                 }
             }
@@ -395,45 +457,25 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // User CRUD Operations
-    fun createUser(name: String, email: String, phone: String, role: String, department: String, region: String) {
+    // User CRUD & Activation Operations with Supabase & Room
+    fun createUser(name: String, email: String, phone: String, role: String, department: String, region: String, isActive: Boolean = true) {
         viewModelScope.launch {
+            val cleanEmail = email.trim().lowercase()
             val user = UserEntity(
                 name = name.trim(),
-                email = email.trim(),
+                email = cleanEmail,
                 phone = phone.trim(),
                 role = role,
                 department = department.ifBlank { "Field Services" },
-                region = region.ifBlank { "National" }
+                region = region.ifBlank { "National" },
+                isActive = isActive
             )
             val id = userDao.insertUser(user)
+            val cloudUid = "usr_${cleanEmail.hashCode()}"
             try {
-                firestoreRepository.saveUser(
-                    FirestoreUser(
-                        uid = "user_${id}_${System.currentTimeMillis()}",
-                        name = user.name,
-                        email = user.email,
-                        phone = user.phone,
-                        role = user.role,
-                        department = user.department,
-                        region = user.region,
-                        isActive = true
-                    )
-                )
-            } catch (e: Exception) {
-                // Saved in local database
-            }
-            _userMessage.value = "User '${user.name}' created with role ${user.role}."
-        }
-    }
-
-    fun updateUser(user: UserEntity) {
-        viewModelScope.launch {
-            userDao.updateUser(user)
-            try {
-                firestoreRepository.saveUser(
-                    FirestoreUser(
-                        uid = "user_${user.id}",
+                sessionManager.supabaseClient.upsertProfile(
+                    SupabaseProfile(
+                        id = cloudUid,
                         name = user.name,
                         email = user.email,
                         phone = user.phone,
@@ -441,12 +483,37 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                         department = user.department,
                         region = user.region,
                         isActive = user.isActive
-                    )
+                    ),
+                    accessToken = sessionManager.accessToken.value
                 )
+                _userMessage.value = "User '${user.name}' created and synced with Supabase."
             } catch (e: Exception) {
-                // Saved in local database
+                _userMessage.value = "User '${user.name}' saved to local database."
             }
-            _userMessage.value = "User '${user.name}' updated."
+        }
+    }
+
+    fun updateUser(user: UserEntity) {
+        viewModelScope.launch {
+            userDao.updateUser(user)
+            try {
+                sessionManager.supabaseClient.updateProfile(
+                    SupabaseProfile(
+                        id = "usr_${user.email.hashCode()}",
+                        name = user.name,
+                        email = user.email,
+                        phone = user.phone,
+                        role = user.role,
+                        department = user.department,
+                        region = user.region,
+                        isActive = user.isActive
+                    ),
+                    accessToken = sessionManager.accessToken.value
+                )
+                _userMessage.value = "User '${user.name}' updated in Supabase & local DB."
+            } catch (e: Exception) {
+                _userMessage.value = "User '${user.name}' updated locally."
+            }
         }
     }
 
@@ -454,11 +521,107 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             userDao.deleteUser(user)
             try {
-                firestoreRepository.deleteUser("user_${user.id}")
+                sessionManager.supabaseClient.deleteProfile("usr_${user.email.hashCode()}", user.email, sessionManager.accessToken.value)
+                _userMessage.value = "User '${user.name}' deleted."
             } catch (e: Exception) {
-                // Removed from local database
+                _userMessage.value = "User '${user.name}' deleted locally."
             }
-            _userMessage.value = "User '${user.name}' removed."
+        }
+    }
+
+    fun activateUser(user: UserEntity, isActive: Boolean) {
+        viewModelScope.launch {
+            userDao.setUserActive(user.id, isActive)
+            try {
+                sessionManager.supabaseClient.setUserActive(
+                    profileId = "usr_${user.email.hashCode()}",
+                    email = user.email,
+                    isActive = isActive,
+                    accessToken = sessionManager.accessToken.value
+                )
+                _userMessage.value = if (isActive) "User '${user.name}' activated and authorized!" else "User '${user.name}' access revoked."
+            } catch (e: Exception) {
+                _userMessage.value = if (isActive) "User '${user.name}' activated locally." else "User '${user.name}' access revoked locally."
+            }
+        }
+    }
+
+    fun syncUsersWithSupabase() {
+        viewModelScope.launch {
+            if (_isSyncingSupabase.value) return@launch
+            _isSyncingSupabase.value = true
+            _supabaseStatusMessage.value = "Fetching users from Supabase..."
+            try {
+                val result = sessionManager.supabaseClient.fetchAllProfiles(sessionManager.accessToken.value)
+                if (result.isSuccess) {
+                    val remoteProfiles = result.getOrNull().orEmpty()
+                    var count = 0
+                    for (p in remoteProfiles) {
+                        val existing = userDao.getUserByEmail(p.email)
+                        if (existing != null) {
+                            userDao.updateUser(
+                                existing.copy(
+                                    name = p.name.ifBlank { existing.name },
+                                    phone = p.phone.ifBlank { existing.phone },
+                                    role = p.role,
+                                    department = p.department,
+                                    region = p.region,
+                                    isActive = p.isActive
+                                )
+                            )
+                        } else {
+                            userDao.insertUser(
+                                UserEntity(
+                                    name = p.name.ifBlank { p.email.substringBefore("@") },
+                                    email = p.email,
+                                    phone = p.phone,
+                                    role = p.role,
+                                    department = p.department,
+                                    region = p.region,
+                                    isActive = p.isActive
+                                )
+                            )
+                        }
+                        count++
+                    }
+                    _supabaseStatusMessage.value = "Synchronized $count profiles with Supabase!"
+                    _userMessage.value = "Supabase User Directory: $count accounts synchronized."
+                } else {
+                    val msg = result.exceptionOrNull()?.message ?: "Sync error"
+                    _supabaseStatusMessage.value = "Supabase users sync: $msg"
+                    _userMessage.value = "Supabase: $msg"
+                }
+            } catch (e: Exception) {
+                _supabaseStatusMessage.value = "Error: ${e.localizedMessage}"
+                _userMessage.value = "Supabase error: ${e.localizedMessage}"
+            } finally {
+                _isSyncingSupabase.value = false
+            }
+        }
+    }
+
+    fun syncSiteReportsWithSupabase() {
+        viewModelScope.launch {
+            if (_isSyncingSupabase.value) return@launch
+            _isSyncingSupabase.value = true
+            _supabaseStatusMessage.value = "Syncing site reports with Supabase..."
+            try {
+                val reports = dao.getPendingReportsList()
+                var uploadCount = 0
+                for (r in reports) {
+                    val res = sessionManager.supabaseClient.insertSiteReport(r, sessionManager.accessToken.value)
+                    if (res.isSuccess) uploadCount++
+                }
+                val fetchRes = sessionManager.supabaseClient.fetchSiteReports(sessionManager.accessToken.value)
+                val countInCloud = fetchRes.getOrNull()?.size ?: 0
+                _supabaseStatusMessage.value = "Site reports database synced ($uploadCount uploaded, $countInCloud in cloud)"
+                _userMessage.value = "Supabase Site DB: $uploadCount uploaded, $countInCloud in cloud"
+            } catch (e: Exception) {
+                _supabaseStatusMessage.value = "Site DB sync error: ${e.localizedMessage}"
+                _userMessage.value = "Site DB sync: ${e.localizedMessage}"
+            } finally {
+                _isSyncingSupabase.value = false
+            }
         }
     }
 
@@ -623,7 +786,14 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
             syncErrorMessage = errorMsg,
             syncedAt = if (syncStatus == "SYNCED") System.currentTimeMillis() else null
         )
-        return dao.insertReport(entity)
+        val id = dao.insertReport(entity)
+        val saved = entity.copy(id = id)
+        viewModelScope.launch {
+            try {
+                sessionManager.supabaseClient.insertSiteReport(saved, sessionManager.accessToken.value)
+            } catch (_: Exception) {}
+        }
+        return id
     }
 
     fun deleteReport(entity: SiteReportEntity) {
@@ -836,6 +1006,9 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                 if (result is ZohoSmtpClient.SmtpResult.Success) {
                     dao.updateSyncStatus(report.id, "SYNCED", null, System.currentTimeMillis())
                     syncedCount++
+                    try {
+                        sessionManager.supabaseClient.insertSiteReport(report, sessionManager.accessToken.value)
+                    } catch (_: Exception) {}
                 } else if (result is ZohoSmtpClient.SmtpResult.Error) {
                     dao.updateSyncStatus(report.id, "FAILED", result.message, null)
                 }

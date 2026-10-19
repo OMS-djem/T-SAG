@@ -1,7 +1,7 @@
 {
   "firestore": [
     {
-      "database": "ai-studio-android-tsag-ce382423-4c80-412d-bf04-c01dd9173a99",
+      "database": "ai-studio-android-tsag-a592eb89-2156-4774-b00a-4c4ff7a0de3a",
       "rules": "firestore.rules"
     }
   ],

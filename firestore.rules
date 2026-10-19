@@ -20,7 +20,10 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && (
         getUserRole() == 'ADMIN' ||
-        (request.auth.token.email != null && request.auth.token.email == 'etb.djemil@gmail.com')
+        (request.auth.token.email != null && (
+          request.auth.token.email.lower() == 'etb.djemil@gmail.com' ||
+          request.auth.token.email.lower() == 'maamardjemil@gmail.com'
+        ))
       );
     }
 

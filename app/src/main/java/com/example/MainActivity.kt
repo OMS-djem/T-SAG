@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.getRoleBadgeColor
+import com.example.ui.screens.AccountPendingActivationScreen
 import com.example.ui.screens.CameraScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.SettingsScreen
@@ -80,12 +81,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 val currentUser by viewModel.currentUser.collectAsState()
+                val isPendingActivation by viewModel.sessionManager.isPendingActivation.collectAsState()
                 val currentRole by viewModel.currentRole.collectAsState()
                 val currentProfile by viewModel.currentProfile.collectAsState()
 
                 if (currentUser == null) {
-                    // Auth Gate: Interactive Sign-In Screen
+                    // Auth Gate: Interactive Sign-In & Self-Registration
                     SignInScreen(sessionManager = viewModel.sessionManager)
+                } else if (isPendingActivation) {
+                    // Holding Gate: Account Pending Activation by Admin
+                    AccountPendingActivationScreen(sessionManager = viewModel.sessionManager)
                 } else {
                     val snackbarHostState = remember { SnackbarHostState() }
                     var currentTab by remember { mutableStateOf(AppTab.AUDIT) }
@@ -278,8 +283,11 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-                }
             }
         }
     }
 }
+}
+}
+
+

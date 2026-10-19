@@ -133,6 +133,32 @@ class FirestoreRepository(
         }
     }
 
+    suspend fun deleteUserByEmailOrUid(uid: String, email: String) {
+        try {
+            deleteUser(uid)
+        } catch (e: Exception) {
+            try {
+                val query = db.collection("users").whereEqualTo("email", email.trim()).get().await()
+                for (doc in query.documents) {
+                    doc.reference.delete().await()
+                }
+            } catch (ignored: Exception) {}
+        }
+    }
+
+    suspend fun updateUserByEmailOrUid(user: FirestoreUser) {
+        try {
+            saveUser(user)
+        } catch (e: Exception) {
+            try {
+                val query = db.collection("users").whereEqualTo("email", user.email.trim()).get().await()
+                for (doc in query.documents) {
+                    saveUser(user.copy(uid = doc.id))
+                }
+            } catch (ignored: Exception) {}
+        }
+    }
+
     // Observe global email configuration
     fun observeMailConfig(): Flow<FirestoreMailConfig?> = flow {
         val path = "mail_config/settings"

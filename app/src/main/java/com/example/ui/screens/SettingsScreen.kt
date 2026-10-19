@@ -661,6 +661,7 @@ fun SettingsScreen(
                     // TAB 2: USER & ROLES DIRECTORY (CRUD)
                     UserManagementSection(
                         users = allUsers,
+                        isAdmin = isAdminUnlocked,
                         onCreateUser = { name, email, phone, role, dept, region ->
                             viewModel.createUser(name, email, phone, role, dept, region)
                         },

@@ -37,4 +37,16 @@ interface UserDao {
 
     @Query("DELETE FROM app_users WHERE id = :id")
     suspend fun deleteUserById(id: Long)
+
+    @Query("SELECT * FROM app_users WHERE LOWER(TRIM(email)) = LOWER(TRIM(:email)) LIMIT 1")
+    suspend fun getUserByEmail(email: String): UserEntity?
+
+    @Query("SELECT * FROM app_users WHERE isActive = 0 ORDER BY createdAt DESC")
+    fun getPendingUsers(): Flow<List<UserEntity>>
+
+    @Query("SELECT COUNT(*) FROM app_users WHERE isActive = 0")
+    fun getPendingUserCount(): Flow<Int>
+
+    @Query("UPDATE app_users SET isActive = :isActive WHERE id = :id")
+    suspend fun setUserActive(id: Long, isActive: Boolean)
 }

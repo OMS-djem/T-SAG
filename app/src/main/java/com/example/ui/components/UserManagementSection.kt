@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,39 +14,47 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.HowToReg
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -71,9 +80,13 @@ import com.example.ui.theme.TelecomNavyPrimary
 @Composable
 fun UserManagementSection(
     users: List<UserEntity>,
+    isAdmin: Boolean = true,
     onCreateUser: (name: String, email: String, phone: String, role: String, department: String, region: String) -> Unit,
     onUpdateUser: (UserEntity) -> Unit,
     onDeleteUser: (UserEntity) -> Unit,
+    onActivateUser: (UserEntity, Boolean) -> Unit = { _, _ -> },
+    onSyncSupabaseUsers: (() -> Unit)? = null,
+    isSyncingUsers: Boolean = false,
     onSelectTechnician: (UserEntity) -> Unit,
     onAddToToGroup: ((String) -> Unit)? = null,
     onAddToCcGroup: ((String) -> Unit)? = null,
@@ -86,18 +99,24 @@ fun UserManagementSection(
     var userToEdit by remember { mutableStateOf<UserEntity?>(null) }
     var userToDelete by remember { mutableStateOf<UserEntity?>(null) }
 
+    val pendingCount = users.count { !it.isActive }
+
     val filteredUsers = users.filter { user ->
-        val matchesRole = selectedRoleFilter == "ALL" || user.role.equals(selectedRoleFilter, ignoreCase = true)
+        val matchesFilter = when (selectedRoleFilter) {
+            "ALL" -> true
+            "PENDING" -> !user.isActive
+            else -> user.role.equals(selectedRoleFilter, ignoreCase = true)
+        }
         val matchesSearch = searchQuery.isBlank() ||
                 user.name.contains(searchQuery, ignoreCase = true) ||
                 user.email.contains(searchQuery, ignoreCase = true) ||
                 user.department.contains(searchQuery, ignoreCase = true) ||
                 user.region.contains(searchQuery, ignoreCase = true)
-        matchesRole && matchesSearch
+        matchesFilter && matchesSearch
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // Top Action Bar: Add User & Search
+        // Top Action Bar: Add User, Sync Supabase & Title
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -105,26 +124,61 @@ fun UserManagementSection(
         ) {
             Column {
                 Text(
-                    text = "User & Role Directory",
+                    text = "User & Authorization Directory",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "${users.size} registered users across 6 telecom roles",
+                    text = "${users.size} users (${pendingCount} pending activation)",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (pendingCount > 0) Color(0xFFD97706) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = if (pendingCount > 0) FontWeight.Bold else FontWeight.Normal
                 )
             }
 
-            Button(
-                onClick = { showCreateDialog = true },
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = TelecomNavyPrimary),
-                modifier = Modifier.testTag("add_user_button")
-            ) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Add User", fontSize = 12.sp)
+            if (isAdmin) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (onSyncSupabaseUsers != null) {
+                        OutlinedButton(
+                            onClick = onSyncSupabaseUsers,
+                            enabled = !isSyncingUsers,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(34.dp).testTag("sync_supabase_users_button")
+                        ) {
+                            if (isSyncingUsers) {
+                                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(imageVector = Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Sync DB", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = { showCreateDialog = true },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = TelecomNavyPrimary),
+                        modifier = Modifier.height(34.dp).testTag("add_user_button")
+                    ) {
+                        Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Add User", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.padding(4.dp)
+                ) {
+                    Text(
+                        text = "Read-Only (Admin required for CRUD & activation)",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
             }
         }
 
@@ -145,7 +199,7 @@ fun UserManagementSection(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Role Filter Chips
+        // Role & Pending Filter Chips
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxWidth()
@@ -157,7 +211,35 @@ fun UserManagementSection(
                     label = { Text("All (${users.size})", fontSize = 11.sp) }
                 )
             }
-            items(UserRole.values()) { role ->
+
+            if (pendingCount > 0) {
+                item {
+                    FilterChip(
+                        selected = selectedRoleFilter == "PENDING",
+                        onClick = { selectedRoleFilter = "PENDING" },
+                        label = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.HourglassTop,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = Color(0xFFB45309)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Pending ($pendingCount)", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = Color(0xFFFEF3C7),
+                            labelColor = Color(0xFFB45309),
+                            selectedContainerColor = Color(0xFFFDE68A),
+                            selectedLabelColor = Color(0xFF92400E)
+                        )
+                    )
+                }
+            }
+
+            items(UserRole.entries) { role ->
                 val count = users.count { it.role.equals(role.code, ignoreCase = true) }
                 FilterChip(
                     selected = selectedRoleFilter == role.code,
@@ -201,10 +283,12 @@ fun UserManagementSection(
                 }
             }
         } else {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 filteredUsers.forEach { user ->
                     UserCardItem(
                         user = user,
+                        isAdmin = isAdmin,
+                        onActivate = { active -> onActivateUser(user, active) },
                         onEdit = { userToEdit = user },
                         onDelete = { userToDelete = user },
                         onSelectTechnician = { onSelectTechnician(user) },
@@ -219,10 +303,10 @@ fun UserManagementSection(
     // CREATE USER DIALOG
     if (showCreateDialog) {
         UserFormDialog(
-            title = "Add New User",
+            title = "Add New User Account",
             initialUser = null,
             onDismiss = { showCreateDialog = false },
-            onSave = { name, email, phone, role, dept, region ->
+            onSave = { name, email, phone, role, dept, region, isActive ->
                 onCreateUser(name, email, phone, role, dept, region)
                 showCreateDialog = false
             }
@@ -232,10 +316,10 @@ fun UserManagementSection(
     // EDIT USER DIALOG
     userToEdit?.let { user ->
         UserFormDialog(
-            title = "Edit User: ${user.name}",
+            title = "Edit User & Authorization: ${user.name}",
             initialUser = user,
             onDismiss = { userToEdit = null },
-            onSave = { name, email, phone, role, dept, region ->
+            onSave = { name, email, phone, role, dept, region, isActive ->
                 onUpdateUser(
                     user.copy(
                         name = name,
@@ -243,7 +327,8 @@ fun UserManagementSection(
                         phone = phone,
                         role = role,
                         department = dept,
-                        region = region
+                        region = region,
+                        isActive = isActive
                     )
                 )
                 userToEdit = null
@@ -263,8 +348,8 @@ fun UserManagementSection(
                     modifier = Modifier.size(28.dp)
                 )
             },
-            title = { Text("Delete User?") },
-            text = { Text("Are you sure you want to remove '${user.name}' (${user.role}) from the directory?") },
+            title = { Text("Delete User Account?") },
+            text = { Text("Are you sure you want to remove '${user.name}' (${user.role}) from the local and Supabase directory?") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -288,6 +373,8 @@ fun UserManagementSection(
 @Composable
 private fun UserCardItem(
     user: UserEntity,
+    isAdmin: Boolean = true,
+    onActivate: (Boolean) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onSelectTechnician: () -> Unit,
@@ -297,22 +384,24 @@ private fun UserCardItem(
     val roleColor = getRoleBadgeColor(user.role)
 
     Card(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.fillMaxWidth()
+        elevation = CardDefaults.cardElevation(defaultElevation = if (user.isActive) 1.dp else 3.dp),
+        border = if (!user.isActive) androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFF59E0B)) else null,
+        modifier = Modifier.fillMaxWidth().testTag("user_card_${user.id}")
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            // Header Row: Avatar, Name/Dept, Status & Role Badges
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     // Avatar circle with initials
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(42.dp)
                             .clip(CircleShape)
                             .background(roleColor.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
@@ -321,7 +410,7 @@ private fun UserCardItem(
                             text = user.name.take(2).uppercase(),
                             fontWeight = FontWeight.Bold,
                             color = roleColor,
-                            fontSize = 14.sp
+                            fontSize = 15.sp
                         )
                     }
 
@@ -330,7 +419,7 @@ private fun UserCardItem(
                     Column {
                         Text(
                             text = user.name,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
@@ -341,22 +430,66 @@ private fun UserCardItem(
                     }
                 }
 
-                // Role Badge
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = roleColor.copy(alpha = 0.12f)
-                ) {
-                    Text(
-                        text = user.role,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = roleColor,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
+                // Badges Column: Active status & Role badge
+                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // Role Badge
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = roleColor.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            text = user.role,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Black,
+                            color = roleColor,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+
+                    // Activation Status Badge
+                    if (user.isActive) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = AccessAccordedGreen.copy(alpha = 0.15f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.Check, contentDescription = null, tint = AccessAccordedGreen, modifier = Modifier.size(10.dp))
+                                Text(
+                                    text = "ACTIVE",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = AccessAccordedGreen
+                                )
+                            }
+                        }
+                    } else {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFFFEF3C7)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.HourglassTop, contentDescription = null, tint = Color(0xFFB45309), modifier = Modifier.size(10.dp))
+                                Text(
+                                    text = "PENDING APPROVAL",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color(0xFFB45309)
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Contact info
             Row(
@@ -376,9 +509,11 @@ private fun UserCardItem(
                 }
             }
 
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Actions row: Quick Mail Group Assignment, Set Active Tech, Edit, Delete
+            // Actions row: Quick Mail Group Assignment, Set Active Tech, Admin Activation Button, Edit, Delete
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -429,12 +564,36 @@ private fun UserCardItem(
                     }
                 }
 
-                Row {
-                    IconButton(onClick = onEdit, modifier = Modifier.size(28.dp)) {
-                        Icon(imageVector = Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(16.dp))
-                    }
-                    IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
-                        Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Delete", tint = AccessRefusedRed, modifier = Modifier.size(16.dp))
+                if (isAdmin) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // Admin One-Tap Activation Button
+                        if (!user.isActive) {
+                            Button(
+                                onClick = { onActivate(true) },
+                                colors = ButtonDefaults.buttonColors(containerColor = AccessAccordedGreen),
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(28.dp).testTag("activate_user_${user.id}")
+                            ) {
+                                Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(12.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Activate", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { onActivate(false) },
+                                shape = RoundedCornerShape(6.dp),
+                                modifier = Modifier.height(28.dp).testTag("deactivate_user_${user.id}")
+                            ) {
+                                Text("Deactivate", fontSize = 9.sp, color = Color.Gray)
+                            }
+                        }
+
+                        IconButton(onClick = onEdit, modifier = Modifier.size(28.dp).testTag("edit_user_${user.id}")) {
+                            Icon(imageVector = Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(15.dp))
+                        }
+                        IconButton(onClick = onDelete, modifier = Modifier.size(28.dp).testTag("delete_user_${user.id}")) {
+                            Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Delete", tint = AccessRefusedRed, modifier = Modifier.size(15.dp))
+                        }
                     }
                 }
             }
@@ -448,7 +607,7 @@ private fun UserFormDialog(
     title: String,
     initialUser: UserEntity?,
     onDismiss: () -> Unit,
-    onSave: (name: String, email: String, phone: String, role: String, department: String, region: String) -> Unit
+    onSave: (name: String, email: String, phone: String, role: String, department: String, region: String, isActive: Boolean) -> Unit
 ) {
     var name by remember { mutableStateOf(initialUser?.name ?: "") }
     var email by remember { mutableStateOf(initialUser?.email ?: "") }
@@ -456,6 +615,7 @@ private fun UserFormDialog(
     var selectedRole by remember { mutableStateOf(initialUser?.role ?: "TECHNICIAN") }
     var department by remember { mutableStateOf(initialUser?.department ?: "Field Services") }
     var region by remember { mutableStateOf(initialUser?.region ?: "National") }
+    var isActive by remember { mutableStateOf(initialUser?.isActive ?: true) }
 
     var isRoleDropdownExpanded by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -498,10 +658,10 @@ private fun UserFormDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     OutlinedTextField(
-                        value = UserRole.values().firstOrNull { it.code == selectedRole }?.label ?: selectedRole,
+                        value = UserRole.entries.firstOrNull { it.code == selectedRole }?.label ?: selectedRole,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("Assigned Role *") },
+                        label = { Text("Assigned Operational Role *") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isRoleDropdownExpanded) },
                         modifier = Modifier
                             .menuAnchor()
@@ -512,7 +672,7 @@ private fun UserFormDialog(
                         expanded = isRoleDropdownExpanded,
                         onDismissRequest = { isRoleDropdownExpanded = false }
                     ) {
-                        UserRole.values().forEach { role ->
+                        UserRole.entries.forEach { role ->
                             DropdownMenuItem(
                                 text = {
                                     Column {
@@ -549,6 +709,36 @@ private fun UserFormDialog(
                     )
                 }
 
+                // Account Activation & Authorization Toggle
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Account Activated & Authorized", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                            Text(
+                                text = if (isActive) "User can sign in and file audits" else "Waiting for admin activation",
+                                fontSize = 10.sp,
+                                color = if (isActive) AccessAccordedGreen else Color(0xFFD97706)
+                            )
+                        }
+                        Switch(
+                            checked = isActive,
+                            onCheckedChange = { isActive = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = AccessAccordedGreen
+                            )
+                        )
+                    }
+                }
+
                 errorMessage?.let {
                     Text(text = it, color = AccessRefusedRed, fontSize = 11.sp)
                 }
@@ -560,7 +750,7 @@ private fun UserFormDialog(
                     if (name.isBlank() || email.isBlank()) {
                         errorMessage = "Please enter full name and email."
                     } else {
-                        onSave(name, email, phone, selectedRole, department, region)
+                        onSave(name, email, phone, selectedRole, department, region, isActive)
                     }
                 }
             ) {
