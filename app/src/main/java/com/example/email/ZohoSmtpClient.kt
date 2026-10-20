@@ -104,6 +104,7 @@ object ZohoSmtpClient {
         ccRecipients: List<String> = emptyList(),
         subject: String,
         bodyText: String,
+        htmlBody: String? = null,
         attachments: List<File> = emptyList()
     ): SmtpResult = withContext(Dispatchers.IO) {
         if (password.isBlank()) {
@@ -213,13 +214,38 @@ object ZohoSmtpClient {
             writer.write("X-Mailer: Mobiserve Field Operations Android Client\r\n")
             writer.write("\r\n")
 
-            // Part 1: Body Text
-            writer.write("--$boundary\r\n")
-            writer.write("Content-Type: text/plain; charset=UTF-8\r\n")
-            writer.write("Content-Transfer-Encoding: 8bit\r\n")
-            writer.write("\r\n")
-            writer.write(bodyText)
-            writer.write("\r\n\r\n")
+            // Part 1: Body (Alternative text/plain and text/html if HTML provided)
+            if (htmlBody != null) {
+                val altBoundary = "==_MOBI_ALT_" + UUID.randomUUID().toString().replace("-", "")
+                writer.write("--$boundary\r\n")
+                writer.write("Content-Type: multipart/alternative; boundary=\"$altBoundary\"\r\n")
+                writer.write("\r\n")
+
+                // Plain text
+                writer.write("--$altBoundary\r\n")
+                writer.write("Content-Type: text/plain; charset=UTF-8\r\n")
+                writer.write("Content-Transfer-Encoding: 8bit\r\n")
+                writer.write("\r\n")
+                writer.write(bodyText)
+                writer.write("\r\n\r\n")
+
+                // Rich HTML with colored header banner
+                writer.write("--$altBoundary\r\n")
+                writer.write("Content-Type: text/html; charset=UTF-8\r\n")
+                writer.write("Content-Transfer-Encoding: 8bit\r\n")
+                writer.write("\r\n")
+                writer.write(htmlBody)
+                writer.write("\r\n\r\n")
+
+                writer.write("--$altBoundary--\r\n\r\n")
+            } else {
+                writer.write("--$boundary\r\n")
+                writer.write("Content-Type: text/plain; charset=UTF-8\r\n")
+                writer.write("Content-Transfer-Encoding: 8bit\r\n")
+                writer.write("\r\n")
+                writer.write(bodyText)
+                writer.write("\r\n\r\n")
+            }
 
             // Part 2..N: Attachments
             for (file in attachments) {

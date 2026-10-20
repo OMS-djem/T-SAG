@@ -5,12 +5,14 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.data.model.SiteReportEntity
+import com.example.data.model.TelecomSiteEntity
 import com.example.data.model.UserEntity
 
-@Database(entities = [SiteReportEntity::class, UserEntity::class], version = 3, exportSchema = false)
+@Database(entities = [SiteReportEntity::class, UserEntity::class, TelecomSiteEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun siteReportDao(): SiteReportDao
     abstract fun userDao(): UserDao
+    abstract fun telecomSiteDao(): TelecomSiteDao
 
     companion object {
         @Volatile

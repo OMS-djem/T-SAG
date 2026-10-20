@@ -14,6 +14,7 @@ import com.example.data.model.GsmData
 import com.example.data.model.SiteAccessStatus
 import com.example.data.model.SitePhoto
 import com.example.data.model.SiteReportEntity
+import com.example.data.model.TelecomSiteEntity
 import com.example.data.model.UserEntity
 import com.example.data.model.UserRole
 import com.example.data.remote.FirestoreRepository
@@ -42,6 +43,7 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     private val db = AppDatabase.getDatabase(application)
     private val dao = db.siteReportDao()
     private val userDao = db.userDao()
+    private val telecomSiteDao = db.telecomSiteDao()
     private val gpsManager = GpsManager(application)
     private val gsmManager = GsmManager(application)
     val networkMonitor = NetworkMonitor(application)
@@ -170,6 +172,12 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     val historyReports: StateFlow<List<SiteReportEntity>> = dao.getAllReports()
         .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
+    // Telecom Sites Directory from Room
+    val telecomSites: StateFlow<List<TelecomSiteEntity>> = telecomSiteDao.getAllSitesFlow()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val selectedSiteForMap = MutableStateFlow<TelecomSiteEntity?>(null)
+
     init {
         refreshLocation()
         refreshGsm()
@@ -226,6 +234,135 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                             role = "ACQUISITION",
                             department = "Site Acquisition & Legal",
                             region = "National"
+                        )
+                    )
+                )
+            }
+
+            // Seed initial telecom sites directory with GPS coordinates
+            if (telecomSiteDao.getSiteCount() == 0) {
+                telecomSiteDao.insertSites(
+                    listOf(
+                        TelecomSiteEntity(
+                            siteId = "MOB-ALG-1044",
+                            siteName = "Hydra Telecom Tower",
+                            operator = "Mobiserve",
+                            latitude = 36.754800,
+                            longitude = 3.056900,
+                            altitude = 48.0,
+                            address = "Rue Djenane El Malik, Hydra, Algiers",
+                            region = "Algiers Central",
+                            siteType = "Rooftop Tower",
+                            accessStatus = "ACCORDED",
+                            accessInstructions = "Security badge & ID required at reception gate",
+                            contactPerson = "Farid Touati (Site Manager)",
+                            contactPhone = "+213 550 99 88 77"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "DJZ-ALG-0218",
+                            siteName = "Bab Ezzouar Cyberpark Mast",
+                            operator = "Djezzy",
+                            latitude = 36.721400,
+                            longitude = 3.182500,
+                            altitude = 32.0,
+                            address = "Cyberpark Sidi Abdellah / Bab Ezzouar",
+                            region = "Algiers East",
+                            siteType = "Greenfield Mast",
+                            accessStatus = "PENDING",
+                            accessInstructions = "Work permit signed by NOC required for climbing",
+                            contactPerson = "Nassim Brahimi",
+                            contactPhone = "+213 551 11 22 33"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "MOB-ALG-0512",
+                            siteName = "Kouba Plateau Central",
+                            operator = "Mobilis",
+                            latitude = 36.732800,
+                            longitude = 3.078900,
+                            altitude = 115.0,
+                            address = "Avenue des Frères Abdeslami, Kouba, Algiers",
+                            region = "Algiers South",
+                            siteType = "Monopole",
+                            accessStatus = "ACCORDED",
+                            accessInstructions = "Security gate combination code: 4492",
+                            contactPerson = "Karim Cherif",
+                            contactPhone = "+213 552 33 44 55"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "OOR-ALG-0891",
+                            siteName = "El Biar Relay Station",
+                            operator = "Ooredoo",
+                            latitude = 36.768500,
+                            longitude = 3.032100,
+                            altitude = 160.0,
+                            address = "Chemin Mackley, El Biar, Algiers",
+                            region = "Algiers West",
+                            siteType = "Rooftop Tower",
+                            accessStatus = "REFUSED",
+                            refusalReason = "Building syndicate refused roof access without 48h advance notice",
+                            accessInstructions = "Contact building manager M. Zinedine prior to arrival",
+                            contactPerson = "Zinedine Kaci",
+                            contactPhone = "+213 553 44 55 66"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "MOB-ALG-1205",
+                            siteName = "Bir Mourad Rais Monopole",
+                            operator = "Mobiserve",
+                            latitude = 36.741000,
+                            longitude = 3.051000,
+                            altitude = 78.0,
+                            address = "Route de Blida, Bir Mourad Rais, Algiers",
+                            region = "Algiers Central",
+                            siteType = "Monopole",
+                            accessStatus = "ACCORDED",
+                            accessInstructions = "Security guard M. Amine on duty 24/7",
+                            contactPerson = "Amine Djelloul",
+                            contactPhone = "+213 554 55 66 77"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "DJZ-ALG-0734",
+                            siteName = "Sidi Yahia Commercial Microcell",
+                            operator = "Djezzy",
+                            latitude = 36.758200,
+                            longitude = 3.039500,
+                            altitude = 92.0,
+                            address = "Boulevard Sidi Yahia, Hydra, Algiers",
+                            region = "Algiers Central",
+                            siteType = "Indoor Microcell",
+                            accessStatus = "PENDING",
+                            accessInstructions = "Mall engineering basement key required",
+                            contactPerson = "Sofiane Benali",
+                            contactPhone = "+213 555 66 77 88"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "MOB-OR-2104",
+                            siteName = "Oran Es-Senia Regional Hub",
+                            operator = "Mobilis",
+                            latitude = 35.631100,
+                            longitude = -0.621000,
+                            altitude = 90.0,
+                            address = "Zone Industrielle Es-Senia, Oran",
+                            region = "Oran",
+                            siteType = "Greenfield Tower",
+                            accessStatus = "ACCORDED",
+                            accessInstructions = "Escort by military liaison required on perimeter",
+                            contactPerson = "Rabah Mansouri",
+                            contactPhone = "+213 556 77 88 99"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "OOR-CST-3309",
+                            siteName = "Constantine Zouaghi Mast",
+                            operator = "Ooredoo",
+                            latitude = 36.321000,
+                            longitude = 6.615000,
+                            altitude = 650.0,
+                            address = "Plateau Zouaghi Slimane, Constantine",
+                            region = "Constantine",
+                            siteType = "Greenfield Mast",
+                            accessStatus = "PENDING",
+                            accessInstructions = "NOC work authorization code #891",
+                            contactPerson = "Tariq Merabet",
+                            contactPhone = "+213 557 88 99 00"
                         )
                     )
                 )
@@ -315,10 +452,12 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                         // Ignore if rules restriction or offline
                     }
                 } else if (user != null && user.authProvider != "GOOGLE") {
-                    // When using Supabase or local account, trigger Supabase user directory sync
-                    try {
-                        syncUsersWithSupabase()
-                    } catch (ignored: Exception) {}
+                    // When using Supabase or local account, trigger Supabase user directory sync only if configured
+                    if (SupabaseConfig.isConfigured(getApplication())) {
+                        try {
+                            syncUsersWithSupabase()
+                        } catch (_: Exception) {}
+                    }
                 }
             }
         }
@@ -554,6 +693,10 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun syncUsersWithSupabase() {
+        if (!SupabaseConfig.isConfigured(getApplication())) {
+            _supabaseStatusMessage.value = "Supabase not configured (Settings -> Supabase Sync)."
+            return
+        }
         viewModelScope.launch {
             if (_isSyncingSupabase.value) return@launch
             _isSyncingSupabase.value = true
@@ -599,8 +742,8 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                     _userMessage.value = "Supabase: $msg"
                 }
             } catch (e: Exception) {
-                _supabaseStatusMessage.value = "Error: ${e.localizedMessage}"
-                _userMessage.value = "Supabase error: ${e.localizedMessage}"
+                _supabaseStatusMessage.value = "Notice: ${e.localizedMessage}"
+                _userMessage.value = "Supabase: ${e.localizedMessage}"
             } finally {
                 _isSyncingSupabase.value = false
             }
@@ -608,6 +751,10 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun syncSiteReportsWithSupabase() {
+        if (!SupabaseConfig.isConfigured(getApplication())) {
+            _supabaseStatusMessage.value = "Supabase not configured (Settings -> Supabase Sync)."
+            return
+        }
         viewModelScope.launch {
             if (_isSyncingSupabase.value) return@launch
             _isSyncingSupabase.value = true
@@ -624,7 +771,7 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                 _supabaseStatusMessage.value = "Site reports database synced ($uploadCount uploaded, $countInCloud in cloud)"
                 _userMessage.value = "Supabase Site DB: $uploadCount uploaded, $countInCloud in cloud"
             } catch (e: Exception) {
-                _supabaseStatusMessage.value = "Site DB sync error: ${e.localizedMessage}"
+                _supabaseStatusMessage.value = "Site DB sync notice: ${e.localizedMessage}"
                 _userMessage.value = "Site DB sync: ${e.localizedMessage}"
             } finally {
                 _isSyncingSupabase.value = false
@@ -797,10 +944,38 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
         val saved = entity.copy(id = id)
         viewModelScope.launch {
             try {
+                telecomSiteDao.updateSiteAuditStatus(entity.siteId, entity.status, entity.refusalReason)
+            } catch (_: Exception) {}
+            try {
                 sessionManager.supabaseClient.insertSiteReport(saved, sessionManager.accessToken.value)
             } catch (_: Exception) {}
         }
         return id
+    }
+
+    fun selectSiteForMap(site: TelecomSiteEntity?) {
+        selectedSiteForMap.value = site
+    }
+
+    fun selectSiteForAudit(site: TelecomSiteEntity) {
+        siteId.value = site.siteId
+        siteName.value = site.siteName
+        operator.value = site.operator
+        status.value = if (site.accessStatus.equals("REFUSED", ignoreCase = true)) {
+            SiteAccessStatus.REFUSED
+        } else {
+            SiteAccessStatus.ACCORDED
+        }
+        refusalReason.value = site.refusalReason ?: ""
+        _userMessage.value = "Selected site '${site.siteId}' for audit"
+    }
+
+    fun addNewTelecomSite(site: TelecomSiteEntity) {
+        viewModelScope.launch {
+            telecomSiteDao.insertSite(site)
+            _userMessage.value = "Site '${site.siteId}' added to map"
+            selectedSiteForMap.value = site
+        }
     }
 
     fun deleteReport(entity: SiteReportEntity) {
@@ -863,6 +1038,22 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
+    fun getPreparedHtmlBody(): String {
+        return EmailHelper.generateHtmlBody(
+            siteId = siteId.value,
+            siteName = siteName.value,
+            operator = operator.value,
+            status = status.value,
+            refusalReason = refusalReason.value,
+            notes = notes.value,
+            technicianName = technicianName.value,
+            technicianPhone = technicianPhone.value,
+            gps = _gpsData.value,
+            gsm = _gsmData.value,
+            photoCount = _photos.value.size
+        )
+    }
+
     fun getAttachedPhotoFiles(): List<File> {
         return _photos.value.map { File(it.filePath) }.filter { it.exists() }
     }
@@ -896,6 +1087,7 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
             val ccList = getCcList()
             val subject = getPreparedSubject()
             val body = getPreparedBody()
+            val html = getPreparedHtmlBody()
             val attachments = getAttachedPhotoFiles()
 
             // Save report first with SYNCING status
@@ -911,6 +1103,7 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                 ccRecipients = ccList,
                 subject = subject,
                 bodyText = body,
+                htmlBody = html,
                 attachments = attachments
             )
 
@@ -997,6 +1190,34 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                     photoCount = photoFiles.size
                 )
 
+                val html = EmailHelper.generateHtmlBody(
+                    siteId = report.siteId,
+                    siteName = report.siteName,
+                    operator = report.operator,
+                    status = accessStatus,
+                    refusalReason = report.refusalReason,
+                    notes = report.notes,
+                    technicianName = report.technicianName,
+                    technicianPhone = report.technicianPhone,
+                    gps = GpsData(
+                        latitude = report.latitude,
+                        longitude = report.longitude,
+                        altitude = report.altitude,
+                        accuracy = report.accuracy,
+                        address = report.address
+                    ),
+                    gsm = GsmData(
+                        operatorName = report.gsmOperator,
+                        networkType = report.networkType,
+                        mcc = report.mcc,
+                        mnc = report.mnc,
+                        lacTac = report.lac,
+                        cellId = report.cellId,
+                        signalDbm = report.signalDbm
+                    ),
+                    photoCount = photoFiles.size
+                )
+
                 val result = ZohoSmtpClient.sendEmail(
                     host = zohoHost.value,
                     port = zohoPort.value,
@@ -1007,6 +1228,7 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                     ccRecipients = ccList,
                     subject = subject,
                     bodyText = body,
+                    htmlBody = html,
                     attachments = photoFiles
                 )
 
@@ -1079,6 +1301,34 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                 photoCount = photoFiles.size
             )
 
+            val html = EmailHelper.generateHtmlBody(
+                siteId = report.siteId,
+                siteName = report.siteName,
+                operator = report.operator,
+                status = accessStatus,
+                refusalReason = report.refusalReason,
+                notes = report.notes,
+                technicianName = report.technicianName,
+                technicianPhone = report.technicianPhone,
+                gps = GpsData(
+                    latitude = report.latitude,
+                    longitude = report.longitude,
+                    altitude = report.altitude,
+                    accuracy = report.accuracy,
+                    address = report.address
+                ),
+                gsm = GsmData(
+                    operatorName = report.gsmOperator,
+                    networkType = report.networkType,
+                    mcc = report.mcc,
+                    mnc = report.mnc,
+                    lacTac = report.lac,
+                    cellId = report.cellId,
+                    signalDbm = report.signalDbm
+                ),
+                photoCount = photoFiles.size
+            )
+
             val result = ZohoSmtpClient.sendEmail(
                 host = zohoHost.value,
                 port = zohoPort.value,
@@ -1089,6 +1339,7 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                 ccRecipients = ccList,
                 subject = subject,
                 bodyText = body,
+                htmlBody = html,
                 attachments = photoFiles
             )
 

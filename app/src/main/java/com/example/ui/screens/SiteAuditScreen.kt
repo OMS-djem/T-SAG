@@ -53,7 +53,8 @@ import com.example.ui.viewmodel.SiteAccessViewModel
 fun SiteAuditScreen(
     viewModel: SiteAccessViewModel,
     snackbarHostState: SnackbarHostState,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenMap: () -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
 
@@ -192,7 +193,8 @@ fun SiteAuditScreen(
             technicianPhone = technicianPhone,
             onTechnicianPhoneChanged = { viewModel.setTechnicianPhone(it) },
             notes = notes,
-            onNotesChanged = { viewModel.setNotes(it) }
+            onNotesChanged = { viewModel.setNotes(it) },
+            onOpenMap = onOpenMap
         )
 
         Spacer(modifier = Modifier.height(14.dp))

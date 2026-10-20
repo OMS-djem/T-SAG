@@ -107,9 +107,10 @@ URGENT ATTENTION: MOBISERVE HOLDING OPERATIONS & DISPATCH
 Site access has been DENIED / REFUSED at site $cleanSite. Immediate management escalation required.
 
 ==================================================
+           SITE ACCESS REPORT: REFUSED
            SITE ACCESS ALERT: NO ACCESS
 ==================================================
-• Status: NO ACCESS / ACCESS DENIED ✕
+• Status: NO ACCESS / ACCESS REFUSED ✕
 • Site ID: $cleanSite
 • Site Name: $cleanName
 • Network Operator: $cleanOp
@@ -155,6 +156,91 @@ Mobiserve Holding Field Services
 Escalation sent to: $DEFAULT_ZOHO_RECIPIENT
             """.trimIndent()
         }
+    }
+
+    fun generateHtmlBody(
+        siteId: String,
+        siteName: String,
+        operator: String,
+        status: SiteAccessStatus,
+        refusalReason: String?,
+        notes: String,
+        technicianName: String,
+        technicianPhone: String,
+        gps: GpsData,
+        gsm: GsmData,
+        photoCount: Int
+    ): String {
+        val timeString = SimpleDateFormat("yyyy-MM-dd HH:mm:ss (z)", Locale.US).format(Date())
+        val cleanSite = siteId.ifBlank { "SITE-UNKNOWN" }.trim()
+        val cleanName = siteName.ifBlank { cleanSite }.trim()
+        val cleanOp = operator.ifBlank { "Telecom Operator" }.trim()
+        val cleanTech = technicianName.ifBlank { "Field Engineer" }.trim()
+        val cleanPhone = technicianPhone.ifBlank { "N/A" }.trim()
+
+        val isAccorded = status == SiteAccessStatus.ACCORDED
+        val bannerBg = if (isAccorded) "#16A34A" else "#DC2626"
+        val bannerTitle = if (isAccorded) "SITE ACCESS REPORT: ACCORDED" else "SITE ACCESS REPORT: REFUSED"
+
+        return """
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; color: #1e293b; background-color: #f8fafc; padding: 16px; margin: 0; }
+    .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; padding: 20px; }
+    .banner { background-color: $bannerBg; color: #ffffff; padding: 12px 16px; text-align: center; font-family: monospace; font-size: 15px; font-weight: bold; border-radius: 6px; margin: 16px 0; letter-spacing: 0.5px; }
+    .section-title { font-weight: bold; font-size: 13px; color: #0f172a; margin-top: 16px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; text-transform: uppercase; }
+    .meta-item { font-size: 13px; margin: 4px 0; }
+    .meta-key { font-weight: 600; color: #475569; }
+    .footer { margin-top: 24px; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <p style="font-size: 14px; margin-top: 0;">${if (isAccorded) "Dear Mobiserve Holding Operations Team,<br><br>Please be advised that site access has been successfully ACCORDED for the telecom site detailed below." else "<strong style='color:#dc2626'>URGENT ATTENTION: MOBISERVE HOLDING OPERATIONS & DISPATCH</strong><br><br>Site access has been DENIED / REFUSED at site $cleanSite. Immediate management escalation required."}</p>
+
+    <div class="banner">
+      ==================================================<br>
+      $bannerTitle<br>
+      ==================================================
+    </div>
+
+    <div class="meta-item"><span class="meta-key">Status:</span> ${if (isAccorded) "<span style='color:#16a34a; font-weight:bold'>ACCESS ACCORDED (GRANTED) ✓</span>" else "<span style='color:#dc2626; font-weight:bold'>NO ACCESS / ACCESS REFUSED ✕</span>"}</div>
+    <div class="meta-item"><span class="meta-key">Site ID:</span> $cleanSite</div>
+    <div class="meta-item"><span class="meta-key">Site Name:</span> $cleanName</div>
+    <div class="meta-item"><span class="meta-key">Network Operator:</span> $cleanOp</div>
+    ${if (!isAccorded) "<div class='meta-item'><span class='meta-key' style='color:#dc2626'>Primary Refusal Reason:</span> ${refusalReason?.ifBlank { "Access Blocked / Refused" } ?: "Access Denied"}</div>" else ""}
+    <div class="meta-item"><span class="meta-key">Date & Time:</span> $timeString</div>
+    <div class="meta-item"><span class="meta-key">Field Technician:</span> $cleanTech ($cleanPhone)</div>
+
+    <div class="section-title">1. Telecom Cellular & GSM Telemetry</div>
+    <div class="meta-item"><span class="meta-key">Network:</span> ${gsm.networkType} (${gsm.operatorName})</div>
+    <div class="meta-item"><span class="meta-key">Cell ID:</span> ${gsm.cellId} | <span class="meta-key">LAC/TAC:</span> ${gsm.lacTac}</div>
+    <div class="meta-item"><span class="meta-key">MCC-MNC:</span> ${gsm.mcc}-${gsm.mnc} | <span class="meta-key">Signal:</span> ${gsm.signalDbm} dBm (${gsm.signalLevel})</div>
+
+    <div class="section-title">2. GPS Location & Audit Trail</div>
+    <div class="meta-item"><span class="meta-key">Coordinates:</span> ${gps.coordinatesString} (±${String.format(Locale.US, "%.1f", gps.accuracy)} m)</div>
+    <div class="meta-item"><span class="meta-key">Altitude:</span> ${String.format(Locale.US, "%.1f", gps.altitude)} m</div>
+    <div class="meta-item"><span class="meta-key">Address:</span> ${gps.address}</div>
+    <div class="meta-item"><a href="${gps.mapsUrl}" style="color: #2563eb; text-decoration: none;">View Google Maps Location &rarr;</a></div>
+
+    <div class="section-title">3. Notes</div>
+    <p style="font-size: 13px; margin: 4px 0;">${if (notes.isNotBlank()) notes else (if (isAccorded) "Technician granted entry to site premises. Normal operational conditions verified." else "Technician arrived on-site but was unable to gain authorized entrance.")}</p>
+
+    <div class="section-title">4. Photo Evidence</div>
+    <div class="meta-item">Total Photos Attached: $photoCount (stamped with security telemetry)</div>
+
+    <div class="footer">
+      <strong>$cleanTech</strong><br>
+      Mobiserve Holding Telecom Field Operations<br>
+      Dispatched via Mobiserve Android Field App
+    </div>
+  </div>
+</body>
+</html>
+        """.trimIndent()
     }
 
     fun createSendEmailIntent(

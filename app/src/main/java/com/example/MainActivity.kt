@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -51,6 +52,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.TelecomSiteEntity
 import com.example.ui.components.getRoleBadgeColor
 import com.example.ui.screens.AccountPendingActivationScreen
 import com.example.ui.screens.CameraScreen
@@ -58,6 +60,7 @@ import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SignInScreen
 import com.example.ui.screens.SiteAuditScreen
+import com.example.ui.screens.SitesMapScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.TelecomBlueAccent
 import com.example.ui.theme.TelecomNavyPrimary
@@ -65,6 +68,7 @@ import com.example.ui.viewmodel.SiteAccessViewModel
 
 enum class AppTab(val label: String) {
     AUDIT("Site Audit"),
+    MAP("Sites Map"),
     HISTORY("History"),
     SETTINGS("Settings")
 }
@@ -148,6 +152,7 @@ class MainActivity : ComponentActivity() {
                                             Text(
                                                 text = when (currentTab) {
                                                     AppTab.AUDIT -> "Site Audit"
+                                                    AppTab.MAP -> "Sites Map & Radar"
                                                     AppTab.HISTORY -> "Audit Logs"
                                                     AppTab.SETTINGS -> "Settings"
                                                 },
@@ -211,6 +216,23 @@ class MainActivity : ComponentActivity() {
                             )
 
                             NavigationBarItem(
+                                selected = currentTab == AppTab.MAP,
+                                onClick = { currentTab = AppTab.MAP },
+                                icon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Map,
+                                        contentDescription = "Sites Map"
+                                    )
+                                },
+                                label = { Text("Map") },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = TelecomNavyPrimary,
+                                    indicatorColor = TelecomBlueAccent.copy(alpha = 0.2f)
+                                ),
+                                modifier = Modifier.testTag("nav_map_tab")
+                            )
+
+                            NavigationBarItem(
                                 selected = currentTab == AppTab.HISTORY,
                                 onClick = { currentTab = AppTab.HISTORY },
                                 icon = {
@@ -263,7 +285,14 @@ class MainActivity : ComponentActivity() {
                             AppTab.AUDIT -> {
                                 SiteAuditScreen(
                                     viewModel = viewModel,
-                                    snackbarHostState = snackbarHostState
+                                    snackbarHostState = snackbarHostState,
+                                    onOpenMap = { currentTab = AppTab.MAP }
+                                )
+                            }
+                            AppTab.MAP -> {
+                                SitesMapScreen(
+                                    viewModel = viewModel,
+                                    onNavigateToAudit = { currentTab = AppTab.AUDIT }
                                 )
                             }
                             AppTab.HISTORY -> {
@@ -272,6 +301,21 @@ class MainActivity : ComponentActivity() {
                                     onSelectReport = { report ->
                                         viewModel.loadFromEntity(report)
                                         currentTab = AppTab.AUDIT
+                                    },
+                                    onViewOnMap = { report ->
+                                        val matchingSite = viewModel.telecomSites.value.find { it.siteId == report.siteId }
+                                            ?: TelecomSiteEntity(
+                                                siteId = report.siteId,
+                                                siteName = report.siteName,
+                                                operator = report.operator,
+                                                latitude = report.latitude,
+                                                longitude = report.longitude,
+                                                address = report.address,
+                                                accessStatus = report.status,
+                                                refusalReason = report.refusalReason
+                                            )
+                                        viewModel.selectSiteForMap(matchingSite)
+                                        currentTab = AppTab.MAP
                                     }
                                 )
                             }

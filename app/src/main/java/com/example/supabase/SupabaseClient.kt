@@ -128,7 +128,7 @@ class SupabaseClient(private val context: Context) {
 
             Result.success(parsed ?: SupabaseAuthResponse(user = SupabaseUser(id = userId, email = cleanEmail)))
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Sign up error", e)
+            Log.w("SupabaseClient", "Sign up failed: ${e.localizedMessage}")
             Result.failure(e)
         }
     }
@@ -137,6 +137,9 @@ class SupabaseClient(private val context: Context) {
      * Signs in an existing user with email and password via Supabase Auth.
      */
     suspend fun signIn(email: String, password: String): Result<SupabaseAuthResponse> = withContext(Dispatchers.IO) {
+        if (!SupabaseConfig.isConfigured(context)) {
+            return@withContext Result.failure(IllegalStateException("Supabase is not configured"))
+        }
         val cleanEmail = email.trim().lowercase()
         val payload = JSONObject().apply {
             put("email", cleanEmail)
@@ -169,7 +172,7 @@ class SupabaseClient(private val context: Context) {
 
             Result.success(parsed)
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "Sign in error", e)
+            Log.w("SupabaseClient", "Sign in failed: ${e.localizedMessage}")
             Result.failure(e)
         }
     }
@@ -178,6 +181,9 @@ class SupabaseClient(private val context: Context) {
      * Fetches user profile by user auth ID or email.
      */
     suspend fun fetchProfile(userId: String, email: String, accessToken: String? = null): Result<SupabaseProfile?> = withContext(Dispatchers.IO) {
+        if (!SupabaseConfig.isConfigured(context)) {
+            return@withContext Result.failure(IllegalStateException("Supabase is not configured"))
+        }
         val queryUrl = if (userId.isNotBlank()) {
             "${baseUrl()}/rest/v1/profiles?id=eq.$userId&select=*"
         } else {
@@ -202,7 +208,7 @@ class SupabaseClient(private val context: Context) {
             val list = profileListAdapter.fromJson(body).orEmpty()
             Result.success(list.firstOrNull())
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "fetchProfile error", e)
+            Log.w("SupabaseClient", "fetchProfile warning: ${e.localizedMessage}")
             Result.failure(e)
         }
     }
@@ -211,6 +217,10 @@ class SupabaseClient(private val context: Context) {
      * Fetches all registered user profiles from Supabase profiles table.
      */
     suspend fun fetchAllProfiles(accessToken: String? = null): Result<List<SupabaseProfile>> = withContext(Dispatchers.IO) {
+        if (!SupabaseConfig.isConfigured(context)) {
+            return@withContext Result.failure(IllegalStateException("Supabase is not configured"))
+        }
+
         val request = Request.Builder()
             .url("${baseUrl()}/rest/v1/profiles?select=*&order=name.asc")
             .get()
@@ -223,13 +233,19 @@ class SupabaseClient(private val context: Context) {
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
+                Log.w("SupabaseClient", "fetchAllProfiles HTTP error: ${response.code}")
                 return@withContext Result.failure(Exception("Failed to fetch user directory: ${response.code}"))
             }
 
-            val list = profileListAdapter.fromJson(body).orEmpty()
+            val list = try {
+                profileListAdapter.fromJson(body).orEmpty()
+            } catch (e: Exception) {
+                Log.w("SupabaseClient", "fetchAllProfiles JSON parse warning: ${e.message}")
+                emptyList()
+            }
             Result.success(list)
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "fetchAllProfiles error", e)
+            Log.w("SupabaseClient", "fetchAllProfiles network warning: ${e.localizedMessage}")
             Result.failure(e)
         }
     }
@@ -377,6 +393,9 @@ class SupabaseClient(private val context: Context) {
      * Inserts or syncs a site audit report to the Supabase site_reports table.
      */
     suspend fun insertSiteReport(report: SiteReportEntity, accessToken: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
+        if (!SupabaseConfig.isConfigured(context)) {
+            return@withContext Result.failure(IllegalStateException("Supabase is not configured"))
+        }
         val payload = JSONObject().apply {
             put("site_id", report.siteId)
             put("site_name", report.siteName)
@@ -415,7 +434,7 @@ class SupabaseClient(private val context: Context) {
                 Result.failure(Exception("Supabase site report upload failed: ${response.code}"))
             }
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "insertSiteReport error", e)
+            Log.w("SupabaseClient", "insertSiteReport warning: ${e.localizedMessage}")
             Result.failure(e)
         }
     }
@@ -424,6 +443,9 @@ class SupabaseClient(private val context: Context) {
      * Fetches site reports from Supabase site_reports table.
      */
     suspend fun fetchSiteReports(accessToken: String? = null): Result<List<SupabaseSiteReport>> = withContext(Dispatchers.IO) {
+        if (!SupabaseConfig.isConfigured(context)) {
+            return@withContext Result.failure(IllegalStateException("Supabase is not configured"))
+        }
         val request = Request.Builder()
             .url("${baseUrl()}/rest/v1/site_reports?select=*&order=created_at.desc")
             .get()
@@ -442,7 +464,7 @@ class SupabaseClient(private val context: Context) {
             val list = siteReportListAdapter.fromJson(body).orEmpty()
             Result.success(list)
         } catch (e: Exception) {
-            Log.e("SupabaseClient", "fetchSiteReports error", e)
+            Log.w("SupabaseClient", "fetchSiteReports warning: ${e.localizedMessage}")
             Result.failure(e)
         }
     }

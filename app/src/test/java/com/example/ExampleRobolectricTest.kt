@@ -257,4 +257,60 @@ class ExampleRobolectricTest {
     assertEquals(4.2f, retrieved.accuracy, 0.1f)
     assertEquals("Bab Ezzouar, Algiers Province", retrieved.address)
   }
+
+  @Test
+  fun `test proximity helper distance and bearing calculations`() {
+    // Technician at Hydra Center (36.753820, 3.058810)
+    // Nearby site 200m away (36.754800, 3.056900)
+    val proximityNear = com.example.location.ProximityHelper.calculateProximity(
+      fromLat = 36.753820,
+      fromLng = 3.058810,
+      toLat = 36.754800,
+      toLng = 3.056900
+    )
+    assertTrue(proximityNear.distanceMeters > 0f)
+    assertTrue(proximityNear.distanceMeters < 500f)
+    assertEquals(com.example.location.ProximityLevel.NEARBY, proximityNear.proximityLevel)
+    assertTrue(proximityNear.formattedDistance.endsWith("m"))
+
+    // Far site in Oran (~350 km)
+    val proximityFar = com.example.location.ProximityHelper.calculateProximity(
+      fromLat = 36.753820,
+      fromLng = 3.058810,
+      toLat = 35.631100,
+      toLng = -0.621000
+    )
+    assertTrue(proximityFar.distanceMeters > 300000f)
+    assertEquals(com.example.location.ProximityLevel.REGIONAL, proximityFar.proximityLevel)
+    assertTrue(proximityFar.formattedDistance.contains("km"))
+  }
+
+  @Test
+  fun `test telecom site dao insert and audit status update`() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = AppDatabase.getDatabase(context)
+    val siteDao = db.telecomSiteDao()
+
+    val site = com.example.data.model.TelecomSiteEntity(
+      siteId = "MOB-TEST-9901",
+      siteName = "Test Rooftop Mast",
+      operator = "Mobiserve",
+      latitude = 36.750000,
+      longitude = 3.050000,
+      accessStatus = "PENDING"
+    )
+
+    val id = siteDao.insertSite(site)
+    assertTrue(id > 0)
+
+    val queried = siteDao.getSiteById("MOB-TEST-9901")
+    assertTrue(queried != null)
+    assertEquals("PENDING", queried?.accessStatus)
+
+    // Update status to REFUSED
+    siteDao.updateSiteAuditStatus("MOB-TEST-9901", "REFUSED", "Guard permit expired")
+    val updated = siteDao.getSiteById("MOB-TEST-9901")
+    assertEquals("REFUSED", updated?.accessStatus)
+    assertEquals("Guard permit expired", updated?.refusalReason)
+  }
 }

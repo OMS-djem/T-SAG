@@ -296,7 +296,49 @@ fun EmailDispatchSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // REPORT STATUS BANNER (Green if granted/accorded, Red if refused)
+            val isAccorded = status == SiteAccessStatus.ACCORDED
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = if (isAccorded) AccessAccordedGreen else AccessRefusedRed,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("report_status_banner_card")
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "==================================================",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = (-0.5).sp
+                    )
+                    Text(
+                        text = if (isAccorded) "SITE ACCESS REPORT: ACCORDED" else "SITE ACCESS REPORT: REFUSED",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(vertical = 3.dp)
+                    )
+                    Text(
+                        text = "==================================================",
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = (-0.5).sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // PRIMARY ACTION: Direct Send via Zoho SMTP
             Button(

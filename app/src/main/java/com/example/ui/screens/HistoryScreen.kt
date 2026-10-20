@@ -99,7 +99,8 @@ import java.util.Locale
 fun HistoryScreen(
     viewModel: SiteAccessViewModel,
     onSelectReport: (SiteReportEntity) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onViewOnMap: ((SiteReportEntity) -> Unit)? = null
 ) {
     val reports by viewModel.historyReports.collectAsState()
     val isOnline by viewModel.isOnline.collectAsState()
@@ -326,7 +327,8 @@ fun HistoryScreen(
                         onPhotoClick = { path -> photoVerificationPreview = path },
                         onLoadIntoForm = { onSelectReport(report) },
                         onRetrySync = { viewModel.syncSingleReport(report) },
-                        onDelete = { viewModel.deleteReport(report) }
+                        onDelete = { viewModel.deleteReport(report) },
+                        onViewOnMap = onViewOnMap
                     )
                 }
             }
@@ -426,7 +428,8 @@ private fun SiteAuditHistoryItem(
     onPhotoClick: (String) -> Unit,
     onLoadIntoForm: () -> Unit,
     onRetrySync: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onViewOnMap: ((SiteReportEntity) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val isAccorded = report.status == "ACCORDED"
@@ -681,24 +684,30 @@ private fun SiteAuditHistoryItem(
                         )
                         IconButton(
                             onClick = {
-                                try {
-                                    val mapIntent = Intent(
-                                        Intent.ACTION_VIEW,
-                                        Uri.parse("https://maps.google.com/?q=${report.latitude},${report.longitude}")
-                                    )
-                                    mapIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                    context.startActivity(mapIntent)
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "No map application available", Toast.LENGTH_SHORT).show()
+                                if (onViewOnMap != null) {
+                                    onViewOnMap(report)
+                                } else {
+                                    try {
+                                        val mapIntent = Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("https://maps.google.com/?q=${report.latitude},${report.longitude}")
+                                        )
+                                        mapIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        context.startActivity(mapIntent)
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "No map application available", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             },
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier
+                                .size(24.dp)
+                                .testTag("history_view_on_map_${report.siteId}")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Map,
                                 contentDescription = "View on Map",
                                 tint = TelecomBlueAccent,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                         }
                     }
@@ -849,6 +858,45 @@ fun SiteAuditDetailDialog(
 
                     IconButton(onClick = onDismiss) {
                         Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // REPORT STATUS BANNER (Green if accorded/granted, Red if refused)
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = statusColor,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "==================================================",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = (-0.5).sp
+                        )
+                        Text(
+                            text = if (isAccorded) "SITE ACCESS REPORT: ACCORDED" else "SITE ACCESS REPORT: REFUSED",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        )
+                        Text(
+                            text = "==================================================",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = (-0.5).sp
+                        )
                     }
                 }
 
