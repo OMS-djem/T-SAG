@@ -40,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.TelecomSiteEntity
+import com.example.data.model.UserRole
 import com.example.ui.components.getRoleBadgeColor
 import com.example.ui.screens.AccountPendingActivationScreen
 import com.example.ui.screens.CameraScreen
@@ -103,6 +105,12 @@ class MainActivity : ComponentActivity() {
                     val historyReports by viewModel.historyReports.collectAsState()
                     val pendingCount by viewModel.pendingCount.collectAsState()
                     val isCameraOpen by viewModel.isCameraOpen.collectAsState()
+
+                    LaunchedEffect(currentRole) {
+                        if (currentRole != UserRole.ADMIN && currentTab == AppTab.SETTINGS) {
+                            currentTab = AppTab.AUDIT
+                        }
+                    }
 
                     if (showSignOutConfirm) {
                         AlertDialog(
@@ -257,22 +265,24 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.testTag("nav_history_tab")
                             )
 
-                            NavigationBarItem(
-                                selected = currentTab == AppTab.SETTINGS,
-                                onClick = { currentTab = AppTab.SETTINGS },
-                                icon = {
-                                    Icon(
-                                        imageVector = Icons.Default.Settings,
-                                        contentDescription = "Settings"
-                                    )
-                                },
-                                label = { Text("Settings") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = TelecomNavyPrimary,
-                                    indicatorColor = TelecomBlueAccent.copy(alpha = 0.2f)
-                                ),
-                                modifier = Modifier.testTag("nav_settings_tab")
-                            )
+                            if (currentRole == UserRole.ADMIN) {
+                                NavigationBarItem(
+                                    selected = currentTab == AppTab.SETTINGS,
+                                    onClick = { currentTab = AppTab.SETTINGS },
+                                    icon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Settings,
+                                            contentDescription = "Settings"
+                                        )
+                                    },
+                                    label = { Text("Settings") },
+                                    colors = NavigationBarItemDefaults.colors(
+                                        selectedIconColor = TelecomNavyPrimary,
+                                        indicatorColor = TelecomBlueAccent.copy(alpha = 0.2f)
+                                    ),
+                                    modifier = Modifier.testTag("nav_settings_tab")
+                                )
+                            }
                         }
                     }
                 ) { innerPadding ->
@@ -320,9 +330,17 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                             AppTab.SETTINGS -> {
-                                SettingsScreen(
-                                    viewModel = viewModel
-                                )
+                                if (currentRole == UserRole.ADMIN) {
+                                    SettingsScreen(
+                                        viewModel = viewModel
+                                    )
+                                } else {
+                                    SiteAuditScreen(
+                                        viewModel = viewModel,
+                                        snackbarHostState = snackbarHostState,
+                                        onOpenMap = { currentTab = AppTab.MAP }
+                                    )
+                                }
                             }
                         }
                     }

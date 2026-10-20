@@ -49,6 +49,20 @@ import com.example.ui.theme.AccessAccordedGreenBg
 import com.example.ui.theme.AccessRefusedRed
 import com.example.ui.theme.AccessRefusedRedBg
 
+import android.content.Context
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import com.example.ui.theme.TelecomNavyPrimary
+
 @Composable
 fun StatusSelectorCard(
     currentStatus: SiteAccessStatus,
@@ -57,7 +71,17 @@ fun StatusSelectorCard(
     onRefusalReasonChanged: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val commonRefusalReasons = listOf(
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("mobiserve_custom_reasons", Context.MODE_PRIVATE) }
+    var customReasons by remember {
+        mutableStateOf<List<String>>(
+            prefs.getStringSet("reasons", emptySet<String>())?.toList()?.sorted() ?: emptyList<String>()
+        )
+    }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var newReasonText by remember { mutableStateOf("") }
+
+    val defaultRefusalReasons = listOf(
         "Guard Refused Entry",
         "Key / Padlock Missing or Changed",
         "Owner / Landlord Dispute",
@@ -224,7 +248,42 @@ fun StatusSelectorCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        items(commonRefusalReasons) { reason ->
+                        // Action Chip to Add Custom Reason
+                        item {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = TelecomNavyPrimary,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        newReasonText = ""
+                                        showAddDialog = true
+                                    }
+                                    .testTag("action_add_custom_reason")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = "Add Custom Reason",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "+ Custom Reason",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
+                        // Default Common Reasons
+                        items(defaultRefusalReasons) { reason ->
                             val selected = refusalReason.equals(reason, ignoreCase = true)
                             FilterChip(
                                 selected = selected,
@@ -232,6 +291,36 @@ fun StatusSelectorCard(
                                 label = { Text(reason, fontSize = 12.sp) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = AccessRefusedRed.copy(alpha = 0.15f),
+                                    selectedLabelColor = AccessRefusedRed
+                                )
+                            )
+                        }
+
+                        // User-Created Custom Reasons (with delete icon)
+                        items(customReasons) { customReason ->
+                            val selected = refusalReason.equals(customReason, ignoreCase = true)
+                            FilterChip(
+                                selected = selected,
+                                onClick = { onRefusalReasonChanged(customReason) },
+                                label = { Text(customReason, fontSize = 12.sp, fontWeight = FontWeight.SemiBold) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove custom reason",
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .clickable {
+                                                val updated = customReasons.filter { it != customReason }
+                                                customReasons = updated
+                                                prefs.edit().putStringSet("reasons", updated.toSet()).apply()
+                                                if (refusalReason == customReason) {
+                                                    onRefusalReasonChanged("")
+                                                }
+                                            }
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AccessRefusedRed.copy(alpha = 0.22f),
                                     selectedLabelColor = AccessRefusedRed
                                 )
                             )
@@ -254,5 +343,70 @@ fun StatusSelectorCard(
                 }
             }
         }
+    }
+
+    // Add Custom Denial Reason Dialog
+    if (showAddDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = AccessRefusedRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Add Custom Denial Reason", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Enter a specific refusal reason. It will be added to your quick-select chips and included in escalation emails.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = newReasonText,
+                        onValueChange = { newReasonText = it },
+                        placeholder = { Text("e.g. Access road flooded, Generator out of fuel...") },
+                        label = { Text("Custom Reason") },
+                        singleLine = false,
+                        maxLines = 2,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("custom_reason_dialog_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = newReasonText.trim()
+                        if (trimmed.isNotBlank()) {
+                            val updated = (customReasons + trimmed).distinct().sorted()
+                            customReasons = updated
+                            prefs.edit().putStringSet("reasons", updated.toSet()).apply()
+                            onRefusalReasonChanged(trimmed)
+                            newReasonText = ""
+                            showAddDialog = false
+                        }
+                    },
+                    enabled = newReasonText.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = AccessRefusedRed),
+                    modifier = Modifier.testTag("confirm_add_custom_reason_button")
+                ) {
+                    Text("Add & Select")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
