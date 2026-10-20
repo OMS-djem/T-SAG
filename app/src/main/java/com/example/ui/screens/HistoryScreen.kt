@@ -37,6 +37,15 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.SignalCellularConnectedNoInternet0Bar
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.WarningAmber
@@ -65,7 +74,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -96,6 +108,7 @@ fun HistoryScreen(
 
     var filterStatus by remember { mutableStateOf("ALL") }
     var photoVerificationPreview by remember { mutableStateOf<String?>(null) }
+    var selectedAuditForDetail by remember { mutableStateOf<SiteReportEntity?>(null) }
 
     val filteredList = reports.filter {
         when (filterStatus) {
@@ -170,31 +183,48 @@ fun HistoryScreen(
                     }
                 }
 
-                if (pendingCount > 0) {
-                    Button(
-                        onClick = { viewModel.syncPendingReports(isAutomatic = false) },
-                        enabled = isOnline && !isSyncingQueue,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isOnline) TelecomNavyPrimary else Color.Gray
-                        ),
-                        modifier = Modifier.testTag("sync_queue_button")
-                    ) {
-                        if (isSyncingQueue) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                color = Color.White,
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Default.Sync,
-                                contentDescription = "Sync",
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Sync ($pendingCount)", fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (pendingCount > 0) {
+                        Button(
+                            onClick = { viewModel.syncPendingReports(isAutomatic = false) },
+                            enabled = isOnline && !isSyncingQueue,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isOnline) TelecomNavyPrimary else Color.Gray
+                            ),
+                            modifier = Modifier.testTag("sync_queue_button")
+                        ) {
+                            if (isSyncingQueue) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Sync,
+                                    contentDescription = "Sync",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Sync ($pendingCount)", fontSize = 12.sp)
+                            }
                         }
+                    }
+
+                    OutlinedButton(
+                        onClick = { viewModel.syncSiteReportsWithSupabase() },
+                        enabled = isOnline,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("history_sync_supabase_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CloudSync,
+                            contentDescription = "Sync Supabase DB",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Supabase", fontSize = 12.sp)
                     }
                 }
             }
@@ -292,6 +322,7 @@ fun HistoryScreen(
                 items(filteredList, key = { it.id }) { report ->
                     SiteAuditHistoryItem(
                         report = report,
+                        onItemClick = { selectedAuditForDetail = report },
                         onPhotoClick = { path -> photoVerificationPreview = path },
                         onLoadIntoForm = { onSelectReport(report) },
                         onRetrySync = { viewModel.syncSingleReport(report) },
@@ -300,6 +331,18 @@ fun HistoryScreen(
                 }
             }
         }
+    }
+
+    // Full audit log detail dialog showing complete Google Play Services GPS telemetry
+    selectedAuditForDetail?.let { report ->
+        SiteAuditDetailDialog(
+            report = report,
+            onDismiss = { selectedAuditForDetail = null },
+            onLoadIntoForm = {
+                onSelectReport(report)
+                selectedAuditForDetail = null
+            }
+        )
     }
 
     // Full screen verification photo dialog
@@ -379,11 +422,13 @@ fun HistoryScreen(
 @Composable
 private fun SiteAuditHistoryItem(
     report: SiteReportEntity,
+    onItemClick: () -> Unit,
     onPhotoClick: (String) -> Unit,
     onLoadIntoForm: () -> Unit,
     onRetrySync: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
     val isAccorded = report.status == "ACCORDED"
     val statusColor = if (isAccorded) AccessAccordedGreen else AccessRefusedRed
     val formattedTime = SimpleDateFormat("dd MMM yyyy • HH:mm:ss", Locale.US).format(Date(report.createdAt))
@@ -395,6 +440,7 @@ private fun SiteAuditHistoryItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable { onItemClick() }
             .testTag("audit_history_item_${report.id}"),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -615,12 +661,47 @@ private fun SiteAuditHistoryItem(
 
                     Spacer(modifier = Modifier.height(2.dp))
 
-                    Text(
-                        text = "GPS: ${String.format("%.4f, %.4f", report.latitude, report.longitude)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    // GPS Coordinates with Map launcher
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocationOn,
+                            contentDescription = "GPS",
+                            tint = TelecomBlueAccent,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "GPS: ${String.format(Locale.US, "%.5f, %.5f", report.latitude, report.longitude)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        IconButton(
+                            onClick = {
+                                try {
+                                    val mapIntent = Intent(
+                                        Intent.ACTION_VIEW,
+                                        Uri.parse("https://maps.google.com/?q=${report.latitude},${report.longitude}")
+                                    )
+                                    mapIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    context.startActivity(mapIntent)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "No map application available", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.size(22.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Map,
+                                contentDescription = "View on Map",
+                                tint = TelecomBlueAccent,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
 
                     Text(
                         text = "GSM: CID ${report.cellId} | LAC ${report.lac} (${report.networkType})",
@@ -640,13 +721,24 @@ private fun SiteAuditHistoryItem(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Action Buttons Row: Retry Sync, Load into Form, Delete
+            // Action Buttons Row: Audit Log, Retry Sync, Load into Form, Delete
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Open full audit detail dialog
+                    OutlinedButton(
+                        onClick = onItemClick,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Info, contentDescription = null, modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Audit Log", fontSize = 11.sp)
+                    }
+
                     // Retry Sync button if not synced
                     if (report.syncStatus != "SYNCED") {
                         OutlinedButton(
@@ -656,7 +748,7 @@ private fun SiteAuditHistoryItem(
                         ) {
                             Icon(imageVector = Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(13.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Sync to Zoho", fontSize = 11.sp)
+                            Text("Sync", fontSize = 11.sp)
                         }
                     }
 
@@ -668,7 +760,7 @@ private fun SiteAuditHistoryItem(
                     ) {
                         Icon(imageVector = Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(13.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Open Form", fontSize = 11.sp)
+                        Text("Form", fontSize = 11.sp)
                     }
                 }
 
@@ -682,6 +774,328 @@ private fun SiteAuditHistoryItem(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         modifier = Modifier.size(18.dp)
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SiteAuditDetailDialog(
+    report: SiteReportEntity,
+    onDismiss: () -> Unit,
+    onLoadIntoForm: () -> Unit
+) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val isAccorded = report.status == "ACCORDED"
+    val statusColor = if (isAccorded) AccessAccordedGreen else AccessRefusedRed
+    val formattedTime = SimpleDateFormat("dd MMM yyyy • HH:mm:ss", Locale.US).format(Date(report.createdAt))
+    val coordsDec = String.format(Locale.US, "%.6f, %.6f", report.latitude, report.longitude)
+    val formattedLat = String.format(Locale.US, "%.6f° %s", Math.abs(report.latitude), if (report.latitude >= 0) "N" else "S")
+    val formattedLng = String.format(Locale.US, "%.6f° %s", Math.abs(report.longitude), if (report.longitude >= 0) "E" else "W")
+    val mapsUrl = "https://maps.google.com/?q=${report.latitude},${report.longitude}"
+
+    val photoList = report.photoPaths.split("|").filter { it.isNotBlank() }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Header with Site ID, Status Badge, and Close Button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(statusColor.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isAccorded) Icons.Default.CheckCircle else Icons.Default.Cancel,
+                                contentDescription = null,
+                                tint = statusColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Audit Log #${report.id}",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${report.siteId} • ${report.operator}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    IconButton(onClick = onDismiss) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // GPS TELEMETRY AUDIT SECTION (Google Play Services Location API)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.LocationOn,
+                                    contentDescription = null,
+                                    tint = TelecomBlueAccent,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Google Play Services GPS Telemetry",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TelecomNavyPrimary
+                                )
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = TelecomBlueAccent.copy(alpha = 0.12f)
+                            ) {
+                                Text(
+                                    text = "±${String.format(Locale.US, "%.1f", report.accuracy)} m",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TelecomBlueAccent,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Formatted Lat/Long Degrees
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("LATITUDE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(formattedLat, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("LONGITUDE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(formattedLng, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Decimal Coordinates & Altitude
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column {
+                                Text("DECIMAL FIX", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(coordsDec, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("ALTITUDE ASL", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("${String.format(Locale.US, "%.1f", report.altitude)} m", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            }
+                        }
+
+                        if (report.address.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Area: ${report.address}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Map & Copy action buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    try {
+                                        val mapIntent = Intent(Intent.ACTION_VIEW, Uri.parse(mapsUrl))
+                                        mapIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                        context.startActivity(mapIntent)
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "No map application available", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.Map, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("View on Maps", fontSize = 11.sp)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    clipboardManager.setText(AnnotatedString(coordsDec))
+                                    Toast.makeText(context, "Coordinates copied: $coordsDec", Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Copy", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // GSM Telemetry Box
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "GSM Cellular Tower Telemetry",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "CID: ${report.cellId}  •  LAC: ${report.lac}  •  ${report.networkType} (${report.signalDbm} dBm)",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = "Operator: ${report.gsmOperator} (MCC ${report.mcc} / MNC ${report.mnc})",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Technician & Audit Details
+                Column {
+                    Text(
+                        text = "Technician: ${report.technicianName} • ${report.technicianPhone}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Dispatched To: ${report.recipientEmail}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Logged At: $formattedTime",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (!isAccorded && !report.refusalReason.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Refusal Reason: ${report.refusalReason}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AccessRefusedRed,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    if (report.notes.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Notes: ${report.notes}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (photoList.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Evidence Photos (${photoList.size})",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(photoList) { path ->
+                            val f = File(path)
+                            if (f.exists()) {
+                                AsyncImage(
+                                    model = f,
+                                    contentDescription = "Evidence photo",
+                                    modifier = Modifier
+                                        .size(70.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Bottom Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onLoadIntoForm,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = TelecomNavyPrimary)
+                    ) {
+                        Icon(imageVector = Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Load into Form")
+                    }
+
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Close")
+                    }
                 }
             }
         }

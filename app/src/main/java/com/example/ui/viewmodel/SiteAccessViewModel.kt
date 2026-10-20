@@ -26,6 +26,8 @@ import com.example.supabase.SupabaseConfig
 import com.example.supabase.SupabaseProfile
 import com.example.supabase.SupabaseSiteReport
 import com.example.telephony.GsmManager
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -250,10 +252,10 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
 
-        // Observe cloud mail configuration and sync to session state
+        // Observe cloud mail configuration and sync to session state (Google Auth / Firestore)
         viewModelScope.launch {
             currentUser.collectLatest { user ->
-                if (user != null) {
+                if (user != null && user.authProvider == "GOOGLE" && Firebase.auth.currentUser != null) {
                     try {
                         firestoreRepository.observeMailConfig().collectLatest { config ->
                             if (config != null) {
@@ -270,10 +272,10 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
             }
         }
 
-        // Real-time synchronization of Firestore User Directory into Room
+        // Real-time synchronization of User Directory (Firestore when Google Auth, Supabase when Supabase Auth)
         viewModelScope.launch {
             currentUser.collectLatest { user ->
-                if (user != null) {
+                if (user != null && user.authProvider == "GOOGLE" && Firebase.auth.currentUser != null) {
                     try {
                         firestoreRepository.observeUsers().collectLatest { cloudUsers ->
                             for (cu in cloudUsers) {
@@ -312,6 +314,11 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
                     } catch (e: Exception) {
                         // Ignore if rules restriction or offline
                     }
+                } else if (user != null && user.authProvider != "GOOGLE") {
+                    // When using Supabase or local account, trigger Supabase user directory sync
+                    try {
+                        syncUsersWithSupabase()
+                    } catch (ignored: Exception) {}
                 }
             }
         }
@@ -664,14 +671,14 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
 
     fun refreshGsm() {
         viewModelScope.launch {
-            _isRefreshingGps.value = true
+            _isRefreshingGsm.value = true
             try {
                 val cell = gsmManager.readCurrentCellInfo()
                 _gsmData.value = cell
             } catch (e: Exception) {
                 // Keep fallback
             } finally {
-                _isRefreshingGps.value = false
+                _isRefreshingGsm.value = false
             }
         }
     }

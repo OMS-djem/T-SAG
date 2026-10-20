@@ -183,4 +183,78 @@ class ExampleRobolectricTest {
     val fetchedAfterDelete = userDao.getUserById(id)
     assertTrue(fetchedAfterDelete == null)
   }
+
+  @Test
+  fun testGpsDataFormattingAndMapsUrl() {
+    val gps = GpsData(
+      latitude = 36.753820,
+      longitude = 3.058810,
+      altitude = 125.0,
+      accuracy = 3.8f,
+      address = "Bab Ezzouar, Algiers"
+    )
+
+    assertTrue(gps.isValid)
+    assertEquals("36.753820, 3.058810", gps.coordinatesString)
+    assertTrue(gps.formattedLatitude.contains("36.753820° N"))
+    assertTrue(gps.formattedLongitude.contains("3.058810° E"))
+    assertEquals("https://maps.google.com/?q=36.75382,3.05881", gps.mapsUrl)
+    assertTrue(gps.geoUriString.startsWith("geo:36.75382,3.05881"))
+  }
+
+  @Test
+  fun testGpsManagerLocationAcquisition() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val gpsManager = com.example.location.GpsManager(context)
+
+    val gpsData = gpsManager.getCurrentLocation()
+    assertTrue(gpsData.isValid)
+    assertTrue(gpsData.latitude != 0.0)
+    assertTrue(gpsData.longitude != 0.0)
+    assertTrue(gpsData.address.isNotBlank())
+  }
+
+  @Test
+  fun testAuditLogIncludesGpsCoordinates() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = AppDatabase.getDatabase(context)
+    val dao = db.siteReportDao()
+
+    val testReport = SiteReportEntity(
+      siteId = "DZ-ALG-0492",
+      siteName = "Bab Ezzouar Rooftop Hub",
+      operator = "Mobilis",
+      status = "ACCORDED",
+      refusalReason = null,
+      technicianName = "Karim Field",
+      technicianPhone = "+213 550 11 22 33",
+      recipientEmail = "reports@mobiserveholding.com",
+      notes = "Cabinet inspected and secured",
+      latitude = 36.718290,
+      longitude = 3.185200,
+      altitude = 64.5,
+      accuracy = 4.2f,
+      address = "Bab Ezzouar, Algiers Province",
+      gsmOperator = "Mobilis DZ",
+      networkType = "LTE 4G",
+      mcc = "603",
+      mnc = "01",
+      lac = "1204",
+      cellId = "58491",
+      signalDbm = -72,
+      photoPaths = ""
+    )
+
+    val id = dao.insertReport(testReport)
+    assertTrue(id > 0)
+
+    val retrieved = dao.getReportById(id)
+    assertTrue(retrieved != null)
+    assertEquals("DZ-ALG-0492", retrieved?.siteId)
+    assertEquals(36.718290, retrieved!!.latitude, 0.000001)
+    assertEquals(3.185200, retrieved.longitude, 0.000001)
+    assertEquals(64.5, retrieved.altitude, 0.1)
+    assertEquals(4.2f, retrieved.accuracy, 0.1f)
+    assertEquals("Bab Ezzouar, Algiers Province", retrieved.address)
+  }
 }

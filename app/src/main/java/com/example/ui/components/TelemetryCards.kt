@@ -44,6 +44,20 @@ import com.example.data.model.GsmData
 import com.example.ui.theme.TelecomBlueAccent
 import com.example.ui.theme.TelecomNavyPrimary
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
 @Composable
 fun GpsTelemetryCard(
     gps: GpsData,
@@ -51,6 +65,10 @@ fun GpsTelemetryCard(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val formattedTime = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(gps.timestamp))
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -60,15 +78,16 @@ fun GpsTelemetryCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // Header Row: Icon, Title, Play Services badge & Refresh button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
                             .background(TelecomBlueAccent.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
@@ -77,18 +96,20 @@ fun GpsTelemetryCard(
                             imageVector = Icons.Default.GpsFixed,
                             contentDescription = "GPS Coordinates",
                             tint = TelecomBlueAccent,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "GPS Field Coordinates",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                         Text(
-                            text = "GPS Field Coordinates",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = if (gps.accuracy > 0) "Accuracy: ±${String.format("%.1f", gps.accuracy)} m" else "Acquiring Fix...",
+                            text = if (gps.accuracy > 0) "Accuracy: ±${String.format(Locale.US, "%.1f", gps.accuracy)} m • Fix $formattedTime" else "Acquiring Play Services Fix...",
                             style = MaterialTheme.typography.bodySmall,
                             color = if (gps.accuracy in 0.1f..15f) Color(0xFF059669) else MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -112,62 +133,170 @@ fun GpsTelemetryCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Coordinates Display Badge
+            // Google Play Services Provider Tag
             Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                shape = RoundedCornerShape(6.dp),
+                color = TelecomBlueAccent.copy(alpha = 0.1f)
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = "LAT / LONG",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = gps.coordinatesString,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = null,
+                        tint = TelecomBlueAccent,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = gps.provider,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TelecomBlueAccent
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Main Coordinates Display Badge
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "LATITUDE",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = gps.formattedLatitude,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "LONGITUDE",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = gps.formattedLongitude,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
 
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = "ALTITUDE",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = "${String.format("%.0f", gps.altitude)} m",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "DECIMAL FIX",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = gps.coordinatesString,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "ALTITUDE ASL",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = "${String.format(Locale.US, "%.0f", gps.altitude)} m",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Area / Reverse-Geocoded Address
             Text(
                 text = "Area: ${gps.address}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2
             )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Action Buttons: Open in Google Maps & Copy Coordinates
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        try {
+                            val mapIntent = Intent(Intent.ACTION_VIEW, Uri.parse(gps.mapsUrl))
+                            mapIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            context.startActivity(mapIntent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "No map application available", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("open_maps_button"),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Map, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("View on Map", fontSize = 12.sp)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(gps.coordinatesString))
+                        Toast.makeText(context, "Coordinates copied: ${gps.coordinatesString}", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.testTag("copy_coords_button"),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Copy", fontSize = 12.sp)
+                }
+            }
         }
     }
 }

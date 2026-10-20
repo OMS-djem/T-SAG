@@ -37,28 +37,42 @@ class FirestoreRepository(
 
     // Real-time observation of all users in organization (RBAC directory)
     fun observeUsers(): Flow<List<FirestoreUser>> = flow {
+        val currentAuth = auth.currentUser
+        if (currentAuth == null || currentAuth.isAnonymous) {
+            emit(emptyList())
+            return@flow
+        }
         val path = "users"
         emitAll(
             db.collection(path)
                 .snapshots()
                 .map { snapshot -> snapshot.toObjects(FirestoreUser::class.java) }
                 .catch { error ->
-                    if (error is Exception) handleFirestoreError(error, OperationType.LIST, path)
-                    throw error
+                    if (auth.currentUser != null && error is Exception) {
+                        handleFirestoreError(error, OperationType.LIST, path)
+                    }
+                    emit(emptyList())
                 }
         )
     }
 
     // Real-time observation of a single user profile
     fun observeUserProfile(uid: String): Flow<FirestoreUser?> = flow {
+        val currentAuth = auth.currentUser
+        if (currentAuth == null || currentAuth.isAnonymous) {
+            emit(null)
+            return@flow
+        }
         val path = "users/$uid"
         emitAll(
             db.collection("users").document(uid)
                 .snapshots()
                 .map { snapshot -> snapshot.toObject(FirestoreUser::class.java) }
                 .catch { error ->
-                    if (error is Exception) handleFirestoreError(error, OperationType.GET, path)
-                    throw error
+                    if (auth.currentUser != null && error is Exception) {
+                        handleFirestoreError(error, OperationType.GET, path)
+                    }
+                    emit(null)
                 }
         )
     }
@@ -161,14 +175,21 @@ class FirestoreRepository(
 
     // Observe global email configuration
     fun observeMailConfig(): Flow<FirestoreMailConfig?> = flow {
+        val currentAuth = auth.currentUser
+        if (currentAuth == null || currentAuth.isAnonymous) {
+            emit(null)
+            return@flow
+        }
         val path = "mail_config/settings"
         emitAll(
             db.collection("mail_config").document("settings")
                 .snapshots()
                 .map { snapshot -> snapshot.toObject(FirestoreMailConfig::class.java) }
                 .catch { error ->
-                    if (error is Exception) handleFirestoreError(error, OperationType.GET, path)
-                    throw error
+                    if (auth.currentUser != null && error is Exception) {
+                        handleFirestoreError(error, OperationType.GET, path)
+                    }
+                    emit(null)
                 }
         )
     }

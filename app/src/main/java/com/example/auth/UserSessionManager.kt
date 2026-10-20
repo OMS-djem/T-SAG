@@ -460,6 +460,9 @@ class UserSessionManager(
             _isPendingActivation.value = !isNowActive
 
             if (isNowActive) {
+                if (localUser != null && !localUser.isActive) {
+                    userDao.updateUser(localUser.copy(isActive = true, role = profile?.role ?: localUser.role))
+                }
                 val newRole = profile?.roleEnum ?: localUser?.roleEnum ?: UserRole.TECHNICIAN
                 _currentRole.value = newRole
                 _currentProfile.value = profile ?: SupabaseProfile(
