@@ -22,13 +22,27 @@ class FirestoreRepository(
     val db: FirebaseFirestore
 ) {
     // CRITICAL: Always initialize with R.string.firestore_database_id
-    constructor(context: Context) : this(
-        FirebaseFirestore.getInstance(
-            context.applicationContext.getString(R.string.firestore_database_id)
-        )
-    )
+    constructor(context: Context) : this(createFirestore(context))
 
-    private val auth = Firebase.auth
+    private val auth by lazy {
+        Firebase.auth
+    }
+
+    companion object {
+        fun createFirestore(context: Context): FirebaseFirestore {
+            val appContext = context.applicationContext ?: context
+            com.example.TelecomApplication.ensureFirebaseInitialized(appContext)
+            val resId = appContext.resources.getIdentifier("firestore_database_id", "string", appContext.packageName)
+            val dbId = if (resId != 0) {
+                try { appContext.getString(resId) } catch (_: Exception) { null }
+            } else null
+            return if (dbId.isNullOrBlank()) {
+                FirebaseFirestore.getInstance()
+            } else {
+                FirebaseFirestore.getInstance(dbId)
+            }
+        }
+    }
 
     fun requireUserId(): String {
         return auth.currentUser?.uid

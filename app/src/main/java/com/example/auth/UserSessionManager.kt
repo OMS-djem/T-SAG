@@ -46,7 +46,10 @@ class UserSessionManager(
     private val firestoreRepository: FirestoreRepository,
     private val scope: CoroutineScope
 ) {
-    private val auth: FirebaseAuth = Firebase.auth
+    private val auth: FirebaseAuth by lazy {
+        com.example.TelecomApplication.ensureFirebaseInitialized(context)
+        Firebase.auth
+    }
     private val credentialManager: CredentialManager = CredentialManager.create(context)
     val supabaseClient = SupabaseClient(context)
     private val userDao = AppDatabase.getDatabase(context).userDao()
@@ -487,11 +490,16 @@ class UserSessionManager(
         _isLoading.value = true
         _errorMessage.value = null
 
-        val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (e: Exception) {
+        val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        val clientId = if (resId != 0) {
+            try { context.getString(resId) } catch (e: Exception) { null }
+        } else {
+            null
+        }
+
+        if (clientId.isNullOrBlank()) {
             _isLoading.value = false
-            _errorMessage.value = "Google Sign-In configuration missing: default_web_client_id not found"
+            _errorMessage.value = "Google Sign-In configuration missing: default_web_client_id not configured in google-services.json"
             return
         }
 
