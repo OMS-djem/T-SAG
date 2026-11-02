@@ -491,41 +491,6 @@ fun SettingsScreen(
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                // ZOHO REST API TOKEN & ACCOUNT ID
-                                Text(
-                                    text = "ZOHO MAIL REST API TOKEN (STREAMLINE REPORTING)",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    letterSpacing = 0.8.sp
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                val zohoApiToken by viewModel.zohoApiToken.collectAsState()
-                                val zohoAccountId by viewModel.zohoAccountId.collectAsState()
-                                OutlinedTextField(
-                                    value = zohoApiToken,
-                                    onValueChange = { viewModel.setZohoApiToken(it) },
-                                    enabled = isAdminUnlocked,
-                                    label = { Text("Zoho API / OAuth Token (Optional)") },
-                                    placeholder = { Text("Zoho-oauthtoken 1000.xxxx...") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(8.dp),
-                                    singleLine = true
-                                )
-
-                                Spacer(modifier = Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = zohoAccountId,
-                                    onValueChange = { viewModel.setZohoAccountId(it) },
-                                    enabled = isAdminUnlocked,
-                                    label = { Text("Zoho Account ID") },
-                                    placeholder = { Text("default or account number") },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(8.dp),
-                                    singleLine = true
-                                )
-
                                 Spacer(modifier = Modifier.height(14.dp))
 
                                 // TEST SMTP CONNECTION BUTTON

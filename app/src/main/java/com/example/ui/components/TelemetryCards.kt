@@ -400,9 +400,9 @@ fun GsmTelemetryCard(
                     modifier = Modifier.weight(1f)
                 )
                 GsmMetricPill(
-                    label = "RSRP SIGNAL LEVEL",
-                    value = gsm.rsrpDisplay,
-                    subValue = "${gsm.networkType} • ${gsm.signalLevel}",
+                    label = "SIGNAL LEVEL",
+                    value = "${gsm.signalDbm} dBm",
+                    subValue = gsm.signalLevel,
                     highlightColor = if (gsm.signalDbm >= -95) Color(0xFF059669) else Color(0xFFD97706),
                     modifier = Modifier.weight(1f)
                 )

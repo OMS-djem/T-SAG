@@ -87,11 +87,7 @@ class GsmManager(private val context: Context) {
                 }
                 val tac = id.tac.takeIf { it != Int.MAX_VALUE && it != -1 }?.toString() ?: "1042"
                 val ci = id.ci.takeIf { it != Int.MAX_VALUE && it != -1 }?.toString() ?: "48192"
-                val rsrp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val r = info.cellSignalStrength.rsrp
-                    if (r != Int.MAX_VALUE && r < 0) r else null
-                } else null
-                val dbm = rsrp ?: (info.cellSignalStrength.dbm.takeIf { it != Int.MAX_VALUE && it < 0 } ?: -85)
+                val dbm = info.cellSignalStrength.dbm.takeIf { it != Int.MAX_VALUE } ?: -85
                 return GsmData(
                     operatorName = fallbackOp.ifBlank { "LTE Network" },
                     networkType = "LTE 4G",
@@ -100,7 +96,6 @@ class GsmManager(private val context: Context) {
                     lacTac = tac,
                     cellId = ci,
                     signalDbm = dbm,
-                    rsrpDbm = rsrp ?: dbm,
                     signalLevel = getSignalLevelDescription(dbm),
                     isRealSensor = true
                 )
@@ -119,7 +114,7 @@ class GsmManager(private val context: Context) {
                 }
                 val lac = id.lac.takeIf { it != Int.MAX_VALUE && it != -1 }?.toString() ?: "1042"
                 val cid = id.cid.takeIf { it != Int.MAX_VALUE && it != -1 }?.toString() ?: "48192"
-                val dbm = info.cellSignalStrength.dbm.takeIf { it != Int.MAX_VALUE && it < 0 } ?: -80
+                val dbm = info.cellSignalStrength.dbm.takeIf { it != Int.MAX_VALUE } ?: -80
                 return GsmData(
                     operatorName = fallbackOp.ifBlank { "GSM 2G Network" },
                     networkType = "GSM 2G",
@@ -128,7 +123,6 @@ class GsmManager(private val context: Context) {
                     lacTac = lac,
                     cellId = cid,
                     signalDbm = dbm,
-                    rsrpDbm = dbm,
                     signalLevel = getSignalLevelDescription(dbm),
                     isRealSensor = true
                 )
@@ -147,7 +141,7 @@ class GsmManager(private val context: Context) {
                 }
                 val lac = id.lac.takeIf { it != Int.MAX_VALUE && it != -1 }?.toString() ?: "1042"
                 val cid = id.cid.takeIf { it != Int.MAX_VALUE && it != -1 }?.toString() ?: "48192"
-                val dbm = info.cellSignalStrength.dbm.takeIf { it != Int.MAX_VALUE && it < 0 } ?: -85
+                val dbm = info.cellSignalStrength.dbm.takeIf { it != Int.MAX_VALUE } ?: -85
                 return GsmData(
                     operatorName = fallbackOp.ifBlank { "3G UMTS Network" },
                     networkType = "3G WCDMA",
@@ -156,7 +150,6 @@ class GsmManager(private val context: Context) {
                     lacTac = lac,
                     cellId = cid,
                     signalDbm = dbm,
-                    rsrpDbm = dbm,
                     signalLevel = getSignalLevelDescription(dbm),
                     isRealSensor = true
                 )
@@ -168,12 +161,7 @@ class GsmManager(private val context: Context) {
                     val nci = id?.nci?.takeIf { it != Long.MAX_VALUE && it != -1L }?.toString() ?: "48192"
                     val mcc = id?.mccString ?: fallbackMcc
                     val mnc = id?.mncString ?: fallbackMnc
-                    val nrStrength = info.cellSignalStrength as? android.telephony.CellSignalStrengthNr
-                    val ssRsrp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        val r = nrStrength?.ssRsrp
-                        if (r != null && r != Int.MAX_VALUE && r < 0) r else null
-                    } else null
-                    val dbm = ssRsrp ?: (info.cellSignalStrength.dbm.takeIf { it != Int.MAX_VALUE && it < 0 } ?: -78)
+                    val dbm = info.cellSignalStrength.dbm.takeIf { it != Int.MAX_VALUE } ?: -78
                     return GsmData(
                         operatorName = fallbackOp.ifBlank { "5G NR Network" },
                         networkType = "5G NR",
@@ -182,7 +170,6 @@ class GsmManager(private val context: Context) {
                         lacTac = tac,
                         cellId = nci,
                         signalDbm = dbm,
-                        rsrpDbm = ssRsrp ?: dbm,
                         signalLevel = getSignalLevelDescription(dbm),
                         isRealSensor = true
                     )

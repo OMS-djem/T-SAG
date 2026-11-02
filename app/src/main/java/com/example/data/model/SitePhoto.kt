@@ -12,10 +12,5 @@ data class SitePhoto(
     val timestamp: Long = System.currentTimeMillis(),
     val latitude: Double = 0.0,
     val longitude: Double = 0.0,
-    val altitude: Double = 0.0,
-    val accuracy: Float = 0.0f,
-    val cellId: String = "",
-    val rsrpDbm: Int = -85,
-    val equipmentCategory: String = tag,
-    val uriString: String = ""
+    val cellId: String = ""
 )

@@ -56,7 +56,9 @@ object SupabaseConfig {
         val key = getAnonKey(context)
         return url.startsWith("https://") &&
             !url.contains("tsag-telecom-site.supabase.co") &&
+            !url.contains("your-project.supabase.co") &&
             key.isNotBlank() &&
-            !key.contains("dummy_anon_key")
+            !key.contains("dummy_anon_key") &&
+            !key.contains("YOUR_SUPABASE_ANON_KEY")
     }
 }

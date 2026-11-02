@@ -248,7 +248,7 @@ fun CameraTelemetryHudCard(
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                    text = "GPS: ${gpsData.coordinatesString} (±${String.format(Locale.US, "%.1f", gpsData.accuracy)}m)  |  EXIF: AUTO-INJECT ✓",
+                    text = "GPS: ${gpsData.coordinatesString} (±${String.format(Locale.US, "%.1f", gpsData.accuracy)}m)  |  ALT: ${String.format(Locale.US, "%.0f", gpsData.altitude)}m",
                     fontFamily = FontFamily.Monospace,
                     fontSize = 9.5.sp,
                     color = Color(0xFF34D399),
@@ -433,7 +433,7 @@ fun CameraPhotoPreviewDialog(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "✓ GPS coordinates (EXIF metadata & visual watermark), GSM cell telemetry, and timestamp are embedded in this image.",
+                    text = "✓ GPS coordinates, GSM cell telemetry, and timestamp are burned into this image.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TelecomGreen,
                     fontWeight = FontWeight.Medium

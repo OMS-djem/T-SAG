@@ -43,7 +43,6 @@ import com.example.ui.components.EmailPreviewDialog
 import com.example.ui.components.GpsTelemetryCard
 import com.example.ui.components.GsmTelemetryCard
 import com.example.ui.components.PhotoEvidenceSection
-import com.example.ui.components.RsrpSignalStrengthChart
 import com.example.ui.components.SendResultDialog
 import com.example.ui.components.SiteDetailsForm
 import com.example.ui.components.StatusSelectorCard
@@ -86,7 +85,6 @@ fun SiteAuditScreen(
     val isProcessingPhoto by viewModel.isProcessingPhoto.collectAsState()
     val showPreview by viewModel.showEmailPreview.collectAsState()
     val userMessage by viewModel.userMessage.collectAsState()
-    val historyReports by viewModel.historyReports.collectAsState()
 
     // Permissions launcher
     val permissionsLauncher = rememberLauncherForActivityResult(
@@ -219,21 +217,12 @@ fun SiteAuditScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 5. Signal Strength History (RSRP) Line Chart
-        RsrpSignalStrengthChart(
-            reports = historyReports,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(14.dp))
-
         // 5. Photo Evidence & Stamping Section
         PhotoEvidenceSection(
             photos = photos,
             isProcessing = isProcessingPhoto,
             onOpenCamera = { tag -> viewModel.openCamera(tag) },
             onPhotoCaptured = { bitmap, tag -> viewModel.addPhotoBitmap(bitmap, tag) },
-            onPhotoPicked = { uri, tag -> viewModel.addPhotoFromUri(uri, tag) },
             onSimulatePhoto = { tag -> viewModel.addSimulatedPhoto(tag) },
             onDeletePhoto = { photo -> viewModel.removePhoto(photo) }
         )
