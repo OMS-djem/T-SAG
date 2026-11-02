@@ -1,14 +1,17 @@
 package com.example.ui.components
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,9 +29,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.GpsOff
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButtonDefaults
@@ -59,9 +65,12 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.data.model.GpsData
 import com.example.data.model.TelecomSiteEntity
 import com.example.ui.theme.AccessAccordedGreen
+import com.example.ui.theme.TelecomBlueAccent
 import com.example.ui.theme.TelecomNavyPrimary
+import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 enum class LeafletMapLayer(val label: String, val layerKey: String) {
     GOOGLE_HYBRID("Google Hybrid (Satellite + Roads)", "hybrid"),
@@ -92,7 +101,9 @@ fun TelecomMapComponent(
     sites: List<TelecomSiteEntity>,
     selectedSite: TelecomSiteEntity?,
     onSiteSelected: (TelecomSiteEntity) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isRefreshingGps: Boolean = false,
+    onRefreshGps: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
@@ -101,19 +112,36 @@ fun TelecomMapComponent(
     var currentLayer by remember { mutableStateOf(LeafletMapLayer.GOOGLE_HYBRID) }
     var showLayersMenu by remember { mutableStateOf(false) }
 
-    // Keep sites in a ref for bridge callback
+    // GPS Acquisition Timeout tracking
+    var gpsTimedOut by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isRefreshingGps, technicianGps.latitude, technicianGps.longitude) {
+        if (technicianGps.latitude == 0.0 && technicianGps.longitude == 0.0) {
+            gpsTimedOut = false
+            delay(8000)
+            if (technicianGps.latitude == 0.0 && technicianGps.longitude == 0.0 && !isRefreshingGps) {
+                gpsTimedOut = true
+            }
+        } else {
+            gpsTimedOut = false
+        }
+    }
+
     val currentSitesRef = remember { mutableStateOf(sites) }
     currentSitesRef.value = sites
 
-    // Generate HTML content embedding Leaflet 1.9.4, MarkerCluster 1.5.3, and Google Tiles
+    val hasCoordinates = technicianGps.latitude != 0.0 || technicianGps.longitude != 0.0
+    val initLat = if (hasCoordinates) technicianGps.latitude else 36.753820
+    val initLng = if (hasCoordinates) technicianGps.longitude else 3.058810
+
     val leafletHtml = remember {
         generateLeafletHtml(
-            initialLat = if (technicianGps.latitude != 0.0) technicianGps.latitude else 36.753820,
-            initialLng = if (technicianGps.longitude != 0.0) technicianGps.longitude else 3.058810
+            context = context,
+            initialLat = initLat,
+            initialLng = initLng
         )
     }
 
-    // Function to push sites to Leaflet
     fun updateSitesInMap(view: WebView?, siteList: List<TelecomSiteEntity>, selId: String?) {
         if (view == null || !isMapLoaded) return
         val jsonArray = JSONArray()
@@ -131,35 +159,59 @@ fun TelecomMapComponent(
             jsonArray.put(obj)
         }
         val safeSelected = JSONObject.quote(selId ?: "")
-        val js = "renderSites(${jsonArray.toString()}, $safeSelected);"
+        val js = "if (window.renderSites) { window.renderSites(${jsonArray.toString()}, $safeSelected); }"
         view.evaluateJavascript(js, null)
     }
 
-    // Function to push GPS location
     fun updateGpsInMap(view: WebView?, gps: GpsData) {
         if (view == null || !isMapLoaded) return
         if (gps.latitude != 0.0 && gps.longitude != 0.0) {
-            val js = "updateTechnicianLocation(${gps.latitude}, ${gps.longitude}, ${gps.accuracy});"
+            val latStr = String.format(Locale.US, "%.6f", gps.latitude)
+            val lngStr = String.format(Locale.US, "%.6f", gps.longitude)
+            val accStr = String.format(Locale.US, "%.1f", gps.accuracy)
+            val js = "if (window.updateTechnicianLocation) { window.updateTechnicianLocation($latStr, $lngStr, $accStr); }"
             view.evaluateJavascript(js, null)
         }
     }
 
-    // Whenever sites or selectedSite changes, update Leaflet markers
     LaunchedEffect(sites, selectedSite?.siteId, isMapLoaded) {
         if (isMapLoaded) {
             updateSitesInMap(webViewInstance, sites, selectedSite?.siteId)
             if (selectedSite != null) {
-                val js = "selectSite(${JSONObject.quote(selectedSite.siteId)}, ${selectedSite.latitude}, ${selectedSite.longitude});"
+                val latStr = String.format(Locale.US, "%.6f", selectedSite.latitude)
+                val lngStr = String.format(Locale.US, "%.6f", selectedSite.longitude)
+                val js = "if (window.selectSite) { window.selectSite(${JSONObject.quote(selectedSite.siteId)}, $latStr, $lngStr); }"
                 webViewInstance?.evaluateJavascript(js, null)
             }
         }
     }
 
-    // Whenever technician GPS updates, update Leaflet beacon
     LaunchedEffect(technicianGps.latitude, technicianGps.longitude, technicianGps.accuracy, isMapLoaded) {
         if (isMapLoaded) {
             updateGpsInMap(webViewInstance, technicianGps)
         }
+    }
+
+    // If both GPS is missing and no site data is available: Show Full-Screen Placeholder
+    if (!hasCoordinates && sites.isEmpty()) {
+        if (gpsTimedOut) {
+            MapGpsErrorPlaceholder(
+                onRetry = {
+                    gpsTimedOut = false
+                    onRefreshGps()
+                },
+                modifier = modifier,
+                errorMessage = "Failed to acquire technician GPS coordinates.",
+                detailedHelp = "Verify location is turned on in Android quick settings and app has location permission."
+            )
+        } else {
+            MapGpsLoadingPlaceholder(
+                modifier = modifier,
+                statusText = "Acquiring Device GPS Coordinates...",
+                subText = "Waiting for initial satellite fix to map nearby telecom sites..."
+            )
+        }
+        return
     }
 
     Box(
@@ -167,7 +219,6 @@ fun TelecomMapComponent(
             .fillMaxSize()
             .testTag("telecom_map_container")
     ) {
-        // Leaflet Interactive WebView Map
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -175,24 +226,43 @@ fun TelecomMapComponent(
                     settings.apply {
                         javaScriptEnabled = true
                         domStorageEnabled = true
+                        databaseEnabled = true
+                        allowFileAccess = true
+                        allowContentAccess = true
+                        allowFileAccessFromFileURLs = true
+                        allowUniversalAccessFromFileURLs = true
                         loadWithOverviewMode = true
                         useWideViewPort = true
+                        userAgentString = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                         cacheMode = WebSettings.LOAD_DEFAULT
+                        mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                         setSupportZoom(false)
                         builtInZoomControls = false
                         displayZoomControls = false
                     }
-                    webChromeClient = WebChromeClient()
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
+                            android.util.Log.d("LeafletFullMap", "${cm?.message()} at line ${cm?.lineNumber()}")
+                            return true
+                        }
+                    }
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             super.onPageFinished(view, url)
                             isMapLoaded = true
+                            view?.evaluateJavascript("if (window.map) { window.map.invalidateSize(true); }", null)
+                            view?.postDelayed({
+                                view.evaluateJavascript("if (window.map) { window.map.invalidateSize(true); }", null)
+                            }, 250)
                             updateGpsInMap(view, technicianGps)
                             updateSitesInMap(view, currentSitesRef.value, selectedSite?.siteId)
                         }
+
+                        override fun onReceivedSslError(view: WebView?, handler: android.webkit.SslErrorHandler?, error: android.net.http.SslError?) {
+                            handler?.proceed()
+                        }
                     }
 
-                    // Bridge for clicking markers & selecting sites
                     addJavascriptInterface(
                         LeafletAndroidBridge(
                             onSiteSelected = onSiteSelected,
@@ -202,7 +272,7 @@ fun TelecomMapComponent(
                     )
 
                     loadDataWithBaseURL(
-                        "https://leafletjs.com/",
+                        "https://maps.googleapis.com/",
                         leafletHtml,
                         "text/html",
                         "UTF-8",
@@ -210,20 +280,77 @@ fun TelecomMapComponent(
                     )
                 }
             },
+            update = { view ->
+                if (isMapLoaded) {
+                    updateGpsInMap(view, technicianGps)
+                    updateSitesInMap(view, currentSitesRef.value, selectedSite?.siteId)
+                }
+            },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Native HUD Controls: Layer Switcher, Center Location, Fit All, Zoom
+        // Native HUD Controls
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(14.dp)
         ) {
-            // Top Right: Base Map Layer Switcher (Google Hybrid / Google Streets)
+            // Top Center: Floating GPS Acquisition / Error Telemetry Banner
+            AnimatedVisibility(
+                visible = !hasCoordinates || isRefreshingGps,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 110.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = TelecomNavyPrimary.copy(alpha = 0.92f),
+                    shadowElevation = 6.dp,
+                    modifier = Modifier.clickable { onRefreshGps() }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                    ) {
+                        if (isRefreshingGps || !gpsTimedOut) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = TelecomBlueAccent
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Acquiring GPS Telemetry...",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.GpsOff,
+                                contentDescription = null,
+                                tint = Color(0xFFEF4444),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "GPS Timeout • Tap to Retry",
+                                color = Color(0xFFEF4444),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Top Right: Base Map Layer Switcher
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 110.dp) // Below search bar overlay
+                    .padding(top = 110.dp)
             ) {
                 SmallFloatingActionButton(
                     onClick = { showLayersMenu = true },
@@ -262,7 +389,7 @@ fun TelecomMapComponent(
                             onClick = {
                                 currentLayer = layer
                                 showLayersMenu = false
-                                webViewInstance?.evaluateJavascript("setBaseLayer('${layer.layerKey}');", null)
+                                webViewInstance?.evaluateJavascript("if (window.setBaseLayer) { window.setBaseLayer('${layer.layerKey}'); }", null)
                             }
                         )
                     }
@@ -286,18 +413,28 @@ fun TelecomMapComponent(
                         modifier = Modifier
                             .size(8.dp)
                             .clip(CircleShape)
-                            .background(AccessAccordedGreen)
+                            .background(if (hasCoordinates) AccessAccordedGreen else Color(0xFFD97706))
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Column {
                         Text(
-                            text = "GPS: %.5f°, %.5f°".format(technicianGps.latitude, technicianGps.longitude),
+                            text = if (hasCoordinates) {
+                                "GPS: %.5f°, %.5f°".format(technicianGps.latitude, technicianGps.longitude)
+                            } else if (isRefreshingGps || !gpsTimedOut) {
+                                "GPS: Acquiring fix..."
+                            } else {
+                                "GPS: Signal Unavailable"
+                            },
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            text = "Accuracy: ±%.1fm • %s".format(technicianGps.accuracy, technicianGps.provider),
+                            text = if (hasCoordinates) {
+                                "Accuracy: ±%.1fm • %s".format(technicianGps.accuracy, technicianGps.provider)
+                            } else {
+                                "Tap top banner to re-scan"
+                            },
                             fontSize = 9.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -305,7 +442,7 @@ fun TelecomMapComponent(
                 }
             }
 
-            // Bottom Right: Zoom +, Zoom -, Center My Location, Fit All Sites
+            // Bottom Right: Zoom Controls, Center My Location, Fit All Sites
             Column(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -313,7 +450,7 @@ fun TelecomMapComponent(
             ) {
                 SmallFloatingActionButton(
                     onClick = {
-                        webViewInstance?.evaluateJavascript("fitAll();", null)
+                        webViewInstance?.evaluateJavascript("if (window.fitAll) { window.fitAll(); }", null)
                     },
                     containerColor = MaterialTheme.colorScheme.surface,
                     contentColor = TelecomNavyPrimary,
@@ -325,11 +462,13 @@ fun TelecomMapComponent(
 
                 SmallFloatingActionButton(
                     onClick = {
-                        if (technicianGps.latitude != 0.0 && technicianGps.longitude != 0.0) {
-                            webViewInstance?.evaluateJavascript(
-                                "centerTechnician(${technicianGps.latitude}, ${technicianGps.longitude});",
-                                null
-                            )
+                        if (hasCoordinates) {
+                            val latStr = String.format(Locale.US, "%.6f", technicianGps.latitude)
+                            val lngStr = String.format(Locale.US, "%.6f", technicianGps.longitude)
+                            webViewInstance?.evaluateJavascript("if (window.centerTechnician) { window.centerTechnician($latStr, $lngStr); }", null)
+                        } else {
+                            onRefreshGps()
+                            webViewInstance?.evaluateJavascript("if (window.fitAll) { window.fitAll(); }", null)
                         }
                     },
                     containerColor = TelecomNavyPrimary,
@@ -337,7 +476,10 @@ fun TelecomMapComponent(
                     elevation = FloatingActionButtonDefaults.elevation(4.dp),
                     modifier = Modifier.testTag("map_center_gps_button")
                 ) {
-                    Icon(Icons.Default.MyLocation, contentDescription = "My Location")
+                    Icon(
+                        imageVector = if (hasCoordinates) Icons.Default.MyLocation else Icons.Default.Refresh,
+                        contentDescription = "My Location"
+                    )
                 }
 
                 Column(
@@ -350,7 +492,7 @@ fun TelecomMapComponent(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .size(40.dp)
-                            .clickable { webViewInstance?.evaluateJavascript("zoomIn();", null) }
+                            .clickable { webViewInstance?.evaluateJavascript("if (window.zoomIn) { window.zoomIn(); }", null) }
                             .testTag("map_zoom_in_button")
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "Zoom In", tint = MaterialTheme.colorScheme.onSurface)
@@ -365,7 +507,7 @@ fun TelecomMapComponent(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .size(40.dp)
-                            .clickable { webViewInstance?.evaluateJavascript("zoomOut();", null) }
+                            .clickable { webViewInstance?.evaluateJavascript("if (window.zoomOut) { window.zoomOut(); }", null) }
                             .testTag("map_zoom_out_button")
                     ) {
                         Icon(Icons.Default.Remove, contentDescription = "Zoom Out", tint = MaterialTheme.colorScheme.onSurface)
@@ -382,12 +524,17 @@ fun TelecomMapComponent(
     }
 }
 
-/**
- * Generates the self-contained HTML page using Leaflet CSS, MarkerCluster CSS,
- * Google Hybrid & Google Streets tile layers as requested by the user.
- */
-private fun generateLeafletHtml(initialLat: Double, initialLng: Double): String {
-    return """
+private fun generateLeafletHtml(
+    context: android.content.Context,
+    initialLat: Double,
+    initialLng: Double
+): String {
+    val latStr = String.format(Locale.US, "%.6f", initialLat)
+    val lngStr = String.format(Locale.US, "%.6f", initialLng)
+    val localCss = LeafletAssetManager.getInlinedCss(context)
+    val localJs = LeafletAssetManager.getInlinedJs(context)
+
+    val template = """
 <!DOCTYPE html>
 <html>
 <head>
@@ -398,13 +545,21 @@ private fun generateLeafletHtml(initialLat: Double, initialLng: Double): String 
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
-    
-    <!-- Leaflet JS & MarkerCluster JS -->
+
+    <!-- Inlined Offline Leaflet & MarkerCluster Engine -->
+    <style>
+/*__LOCAL_CSS__*/
+    </style>
+    <script>
+/*__LOCAL_JS__*/
+    </script>
+
+    <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 
     <style>
-        html, body, #map {
+        html, body {
             width: 100%;
             height: 100%;
             margin: 0;
@@ -414,6 +569,16 @@ private fun generateLeafletHtml(initialLat: Double, initialLng: Double): String 
             overflow: hidden;
             -webkit-user-select: none;
             user-select: none;
+        }
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            width: 100%;
+            height: 100%;
+            background: #0f172a;
         }
         .tower-marker {
             display: flex;
@@ -497,158 +662,200 @@ private fun generateLeafletHtml(initialLat: Double, initialLng: Double): String 
 <body>
     <div id="map"></div>
     <script>
-        // Base maps
-        const googleHybrid = L.tileLayer('https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', {
-            maxZoom: 20,
-            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
-            attribution: 'Google Maps Hybrid'
-        });
-        const googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-            maxZoom: 20,
-            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
-            attribution: 'Google Maps Streets'
-        });
-
-        // Initialize Map
-        const map = L.map('map', {
-            center: [$initialLat, $initialLng],
-            zoom: 14,
-            zoomControl: false,
-            layers: [googleHybrid]
-        });
-
-        // MarkerCluster Group
-        const markerCluster = L.markerClusterGroup({
-            spiderfyOnMaxZoom: true,
-            showCoverageOnHover: false,
-            zoomToBoundsOnClick: true,
-            maxClusterRadius: 40
-        });
-        map.addLayer(markerCluster);
-
-        let techMarker = null;
-        let techAccuracyCircle = null;
-        let siteMarkersMap = {};
-
-        function setBaseLayer(layerKey) {
-            if (layerKey === 'streets') {
-                if (map.hasLayer(googleHybrid)) map.removeLayer(googleHybrid);
-                if (!map.hasLayer(googleStreets)) map.addLayer(googleStreets);
-            } else {
-                if (map.hasLayer(googleStreets)) map.removeLayer(googleStreets);
-                if (!map.hasLayer(googleHybrid)) map.addLayer(googleHybrid);
+        function startMap() {
+            if (typeof L === 'undefined') {
+                setTimeout(startMap, 50);
+                return;
             }
-        }
 
-        function updateTechnicianLocation(lat, lng, accuracy) {
-            if (!lat || !lng) return;
-            const pos = [lat, lng];
-            if (!techMarker) {
-                const icon = L.divIcon({
-                    className: 'tech-div-icon',
-                    html: '<div class="tech-marker"></div>',
-                    iconSize: [22, 22],
-                    iconAnchor: [11, 11]
-                });
-                techMarker = L.marker(pos, { icon: icon, zIndexOffset: 1000 }).addTo(map);
-                techAccuracyCircle = L.circle(pos, {
-                    radius: accuracy || 15,
-                    color: '#3b82f6',
-                    fillColor: '#3b82f6',
-                    fillOpacity: 0.15,
-                    weight: 1
-                }).addTo(map);
-            } else {
-                techMarker.setLatLng(pos);
-                if (techAccuracyCircle) {
-                    techAccuracyCircle.setLatLng(pos);
-                    if (accuracy) techAccuracyCircle.setRadius(accuracy);
-                }
-            }
-        }
+            // Base maps
+            const googleHybrid = L.tileLayer('https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'] });
+            const googleStreets = L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { maxZoom: 20, subdomains: ['mt0', 'mt1', 'mt2', 'mt3'] });
 
-        function centerTechnician(lat, lng) {
-            if (lat && lng) {
-                map.flyTo([lat, lng], 16, { animate: true, duration: 0.8 });
-            }
-        }
-
-        function zoomIn() { map.zoomIn(); }
-        function zoomOut() { map.zoomOut(); }
-
-        function renderSites(sitesData, selectedSiteId) {
-            markerCluster.clearLayers();
-            siteMarkersMap = {};
-
-            sitesData.forEach(site => {
-                const status = (site.accessStatus || 'PENDING').toLowerCase();
-                const statusClass = status === 'accorded' ? 'accorded' : (status === 'refused' ? 'refused' : 'pending');
-                const isSelected = selectedSiteId && selectedSiteId.toLowerCase() === site.siteId.toLowerCase();
-                const selectedClass = isSelected ? ' selected' : '';
-
-                // Tower Icon SVG
-                const towerSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">' +
-                    '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>' +
-                    '</svg>';
-
-                const icon = L.divIcon({
-                    className: 'site-div-icon',
-                    html: '<div class="tower-marker ' + statusClass + selectedClass + '">' + towerSvg + '</div>',
-                    iconSize: [32, 32],
-                    iconAnchor: [16, 16]
-                });
-
-                const marker = L.marker([site.latitude, site.longitude], { icon: icon });
-
-                const popupHtml = '<div class="popup-container">' +
-                    '<div class="popup-site-id">' + site.siteId + '</div>' +
-                    '<div class="popup-site-name">' + site.operator + ' • ' + site.siteName + '</div>' +
-                    '<div>' + (site.address || site.siteType || '') + '</div>' +
-                    '<span class="popup-status-badge ' + statusClass + '">' + (site.accessStatus || 'PENDING') + '</span>' +
-                    '<button class="popup-select-btn" onclick="triggerAndroidSelection(\'' + site.siteId + '\')">Select & View Details</button>' +
-                    '</div>';
-
-                marker.bindPopup(popupHtml);
-                marker.on('click', () => {
-                    triggerAndroidSelection(site.siteId);
-                });
-
-                markerCluster.addLayer(marker);
-                siteMarkersMap[site.siteId.toLowerCase()] = marker;
+            window.map = L.map('map', {
+                center: [$latStr, $lngStr],
+                zoom: 14,
+                zoomControl: false,
+                layers: [googleHybrid]
             });
-        }
 
-        function selectSite(siteId, lat, lng) {
-            if (!siteId) return;
-            const key = siteId.toLowerCase();
-            const marker = siteMarkersMap[key];
-            if (marker) {
-                markerCluster.zoomToShowLayer(marker, () => {
-                    marker.openPopup();
-                });
-            } else if (lat && lng) {
-                map.flyTo([lat, lng], 17, { animate: true, duration: 0.8 });
-            }
-        }
+            window.googleHybrid = googleHybrid;
+            window.googleStreets = googleStreets;
 
-        function fitAll() {
-            try {
-                const bounds = markerCluster.getBounds();
-                if (bounds && bounds.isValid()) {
-                    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+            const markerCluster = L.markerClusterGroup({
+                spiderfyOnMaxZoom: true,
+                showCoverageOnHover: false,
+                zoomToBoundsOnClick: true,
+                maxClusterRadius: 40
+            });
+            window.map.addLayer(markerCluster);
+            window.markerCluster = markerCluster;
+
+            let techMarker = null;
+            let techAccuracyCircle = null;
+            let siteMarkersMap = {};
+
+            window.setBaseLayer = function(layerKey) {
+                if (!window.map) return;
+                if (layerKey === 'streets') {
+                    if (window.map.hasLayer(window.googleHybrid)) window.map.removeLayer(window.googleHybrid);
+                    if (!window.map.hasLayer(window.googleStreets)) window.map.addLayer(window.googleStreets);
+                } else {
+                    if (window.map.hasLayer(window.googleStreets)) window.map.removeLayer(window.googleStreets);
+                    if (!window.map.hasLayer(window.googleHybrid)) window.map.addLayer(window.googleHybrid);
                 }
-            } catch (e) {
-                console.error(e);
+            };
+
+            window.updateTechnicianLocation = function(lat, lng, accuracy) {
+                if (!window.map || !lat || !lng) return;
+                const pos = [lat, lng];
+                const isFirst = !techMarker;
+                if (!techMarker) {
+                    const icon = L.divIcon({
+                        className: 'tech-div-icon',
+                        html: '<div class="tech-marker"></div>',
+                        iconSize: [22, 22],
+                        iconAnchor: [11, 11]
+                    });
+                    techMarker = L.marker(pos, { icon: icon, zIndexOffset: 1000 }).addTo(window.map);
+                    techAccuracyCircle = L.circle(pos, {
+                        radius: accuracy || 15,
+                        color: '#3b82f6',
+                        fillColor: '#3b82f6',
+                        fillOpacity: 0.15,
+                        weight: 1
+                    }).addTo(window.map);
+                } else {
+                    techMarker.setLatLng(pos);
+                    if (techAccuracyCircle) {
+                        techAccuracyCircle.setLatLng(pos);
+                        if (accuracy) techAccuracyCircle.setRadius(accuracy);
+                    }
+                }
+                if (isFirst) {
+                    window.map.panTo(pos);
+                    window.map.invalidateSize(true);
+                }
+            };
+
+            window.centerTechnician = function(lat, lng) {
+                if (window.map && lat && lng) {
+                    window.map.flyTo([lat, lng], 16, { animate: true, duration: 0.8 });
+                    window.map.invalidateSize(true);
+                }
+            };
+
+            window.zoomIn = function() { if (window.map) window.map.zoomIn(); };
+            window.zoomOut = function() { if (window.map) window.map.zoomOut(); };
+
+            window.renderSites = function(sitesData, selectedSiteId) {
+                if (!window.markerCluster) return;
+                window.markerCluster.clearLayers();
+                siteMarkersMap = {};
+
+                sitesData.forEach(site => {
+                    const status = (site.accessStatus || 'PENDING').toLowerCase();
+                    const statusClass = status === 'accorded' ? 'accorded' : (status === 'refused' ? 'refused' : 'pending');
+                    const isSelected = selectedSiteId && selectedSiteId.toLowerCase() === site.siteId.toLowerCase();
+                    const selectedClass = isSelected ? ' selected' : '';
+
+                    const towerSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">' +
+                        '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>' +
+                        '</svg>';
+
+                    const icon = L.divIcon({
+                        className: 'site-div-icon',
+                        html: '<div class="tower-marker ' + statusClass + selectedClass + '">' + towerSvg + '</div>',
+                        iconSize: [32, 32],
+                        iconAnchor: [16, 16]
+                    });
+
+                    const marker = L.marker([site.latitude, site.longitude], { icon: icon });
+
+                    const popupHtml = '<div class="popup-container">' +
+                        '<div class="popup-site-id">' + site.siteId + '</div>' +
+                        '<div class="popup-site-name">' + site.operator + ' • ' + site.siteName + '</div>' +
+                        '<div>' + (site.address || site.siteType || '') + '</div>' +
+                        '<span class="popup-status-badge ' + statusClass + '">' + (site.accessStatus || 'PENDING') + '</span>' +
+                        '<button class="popup-select-btn" onclick="triggerAndroidSelection(\'' + site.siteId + '\')">Select & View Details</button>' +
+                        '</div>';
+
+                    marker.bindPopup(popupHtml);
+                    marker.on('click', () => {
+                        triggerAndroidSelection(site.siteId);
+                    });
+
+                    window.markerCluster.addLayer(marker);
+                    siteMarkersMap[site.siteId.toLowerCase()] = marker;
+                });
+
+                if (sitesData.length > 0 && (!selectedSiteId || selectedSiteId === '')) {
+                    window.fitAll();
+                }
+            };
+
+            window.selectSite = function(siteId, lat, lng) {
+                if (!siteId) return;
+                const key = siteId.toLowerCase();
+                const marker = siteMarkersMap[key];
+                if (marker) {
+                    window.markerCluster.zoomToShowLayer(marker, () => {
+                        marker.openPopup();
+                    });
+                } else if (lat && lng && window.map) {
+                    window.map.flyTo([lat, lng], 17, { animate: true, duration: 0.8 });
+                }
+            };
+
+            window.fitAll = function() {
+                try {
+                    if (!window.map) return;
+                    let group = L.featureGroup();
+                    if (window.markerCluster && window.markerCluster.getLayers().length > 0) {
+                        group.addLayer(window.markerCluster);
+                    }
+                    if (techMarker) {
+                        group.addLayer(techMarker);
+                    }
+                    const bounds = group.getBounds();
+                    if (bounds && bounds.isValid()) {
+                        window.map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            };
+
+            window.triggerAndroidSelection = function(siteId) {
+                if (window.AndroidBridge && window.AndroidBridge.onSiteSelected) {
+                    window.AndroidBridge.onSiteSelected(siteId);
+                }
+            };
+
+            window.map.invalidateSize(true);
+            setTimeout(function() { if (window.map) window.map.invalidateSize(true); }, 150);
+            setTimeout(function() { if (window.map) window.map.invalidateSize(true); }, 500);
+            setTimeout(function() { if (window.map) window.map.invalidateSize(true); }, 1200);
+
+            if (window.ResizeObserver) {
+                new ResizeObserver(function() {
+                    if (window.map) window.map.invalidateSize(true);
+                }).observe(document.getElementById('map'));
             }
         }
 
-        function triggerAndroidSelection(siteId) {
-            if (window.AndroidBridge && window.AndroidBridge.onSiteSelected) {
-                window.AndroidBridge.onSiteSelected(siteId);
-            }
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+            startMap();
+        } else {
+            window.addEventListener('DOMContentLoaded', startMap);
+            window.addEventListener('load', startMap);
         }
     </script>
 </body>
 </html>
     """.trimIndent()
+
+    return template
+        .replace("/*__LOCAL_CSS__*/", localCss)
+        .replace("/*__LOCAL_JS__*/", localJs)
 }

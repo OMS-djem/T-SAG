@@ -94,6 +94,7 @@ fun SitesMapScreen(
 ) {
     val context = LocalContext.current
     val technicianGps by viewModel.gpsData.collectAsState()
+    val isRefreshingGps by viewModel.isRefreshingGps.collectAsState()
     val allSites by viewModel.telecomSites.collectAsState()
     val selectedSite by viewModel.selectedSiteForMap.collectAsState()
 
@@ -145,6 +146,8 @@ fun SitesMapScreen(
         // Main Map Canvas
         TelecomMapComponent(
             technicianGps = technicianGps,
+            isRefreshingGps = isRefreshingGps,
+            onRefreshGps = { viewModel.refreshLocation() },
             sites = filteredSites,
             selectedSite = selectedSite,
             onSiteSelected = { site ->

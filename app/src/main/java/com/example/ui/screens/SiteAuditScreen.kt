@@ -45,6 +45,7 @@ import com.example.ui.components.GsmTelemetryCard
 import com.example.ui.components.PhotoEvidenceSection
 import com.example.ui.components.SendResultDialog
 import com.example.ui.components.SiteDetailsForm
+import com.example.ui.components.StaticMapPreviewCard
 import com.example.ui.components.StatusSelectorCard
 import com.example.ui.theme.TelecomNavyPrimary
 import com.example.ui.viewmodel.SiteAccessViewModel
@@ -204,6 +205,18 @@ fun SiteAuditScreen(
             gps = gpsData,
             isRefreshing = isRefreshingGps,
             onRefresh = { viewModel.refreshLocation() }
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 3b. Telemetry: Google Maps Static Location Preview
+        StaticMapPreviewCard(
+            gps = gpsData,
+            siteId = siteId,
+            siteName = siteName,
+            isRefreshingGps = isRefreshingGps,
+            onRefreshGps = { viewModel.refreshLocation() },
+            onOpenMap = onOpenMap
         )
 
         Spacer(modifier = Modifier.height(14.dp))
