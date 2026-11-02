@@ -233,6 +233,7 @@ fun SiteAuditScreen(
             isProcessing = isProcessingPhoto,
             onOpenCamera = { tag -> viewModel.openCamera(tag) },
             onPhotoCaptured = { bitmap, tag -> viewModel.addPhotoBitmap(bitmap, tag) },
+            onPhotoPicked = { uri, tag -> viewModel.addPhotoFromUri(uri, tag) },
             onSimulatePhoto = { tag -> viewModel.addSimulatedPhoto(tag) },
             onDeletePhoto = { photo -> viewModel.removePhoto(photo) }
         )

@@ -3,7 +3,11 @@ package com.example.ui.screens
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.media.ExifInterface
+import com.example.camera.ExifMetadataHelper
+import java.io.File
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -162,28 +166,83 @@ fun CameraScreen(
         }
 
         val executor = ContextCompat.getMainExecutor(context)
-        capture.takePicture(
-            executor,
-            object : ImageCapture.OnImageCapturedCallback() {
-                override fun onCaptureSuccess(imageProxy: ImageProxy) {
-                    val rotationDegrees = imageProxy.imageInfo.rotationDegrees
-                    val rawBitmap = imageProxy.toBitmap()
-                    val rotatedBitmap = if (rotationDegrees != 0) {
-                        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
-                        Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
-                    } else {
-                        rawBitmap
+        val tempCaptureFile = try {
+            File.createTempFile("camerax_site_capture_", ".jpg", context.cacheDir)
+        } catch (_: Exception) {
+            null
+        }
+
+        if (tempCaptureFile != null) {
+            // CameraX Metadata Injection: Injects GPS coordinates into the raw captured EXIF header
+            val cameraXMetadata = ExifMetadataHelper.createCameraXMetadata(
+                gps = gpsData,
+                isReversedHorizontal = lensFacing == CameraSelector.LENS_FACING_FRONT
+            )
+            val outputOptions = ImageCapture.OutputFileOptions.Builder(tempCaptureFile)
+                .setMetadata(cameraXMetadata)
+                .build()
+
+            capture.takePicture(
+                outputOptions,
+                executor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        val rawBitmap = BitmapFactory.decodeFile(tempCaptureFile.absolutePath)
+                        if (rawBitmap != null) {
+                            val exif = ExifInterface(tempCaptureFile.absolutePath)
+                            val orientation = exif.getAttributeInt(
+                                ExifInterface.TAG_ORIENTATION,
+                                ExifInterface.ORIENTATION_NORMAL
+                            )
+                            val matrix = Matrix()
+                            when (orientation) {
+                                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+                            }
+                            val rotatedBitmap = if (!matrix.isIdentity) {
+                                Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                            } else {
+                                rawBitmap
+                            }
+                            viewModel.addPhotoBitmap(rotatedBitmap, activeTag)
+                        } else {
+                            viewModel.addSimulatedPhoto(activeTag)
+                        }
+                        try {
+                            tempCaptureFile.delete()
+                        } catch (_: Exception) {}
                     }
-                    imageProxy.close()
 
-                    viewModel.addPhotoBitmap(rotatedBitmap, activeTag)
+                    override fun onError(exception: ImageCaptureException) {
+                        viewModel.addSimulatedPhoto(activeTag)
+                    }
                 }
+            )
+        } else {
+            // In-memory fallback if temp file creation fails
+            capture.takePicture(
+                executor,
+                object : ImageCapture.OnImageCapturedCallback() {
+                    override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                        val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+                        val rawBitmap = imageProxy.toBitmap()
+                        val rotatedBitmap = if (rotationDegrees != 0) {
+                            val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+                            Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                        } else {
+                            rawBitmap
+                        }
+                        imageProxy.close()
+                        viewModel.addPhotoBitmap(rotatedBitmap, activeTag)
+                    }
 
-                override fun onError(exception: ImageCaptureException) {
-                    viewModel.addSimulatedPhoto(activeTag)
+                    override fun onError(exception: ImageCaptureException) {
+                        viewModel.addSimulatedPhoto(activeTag)
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 
     Box(

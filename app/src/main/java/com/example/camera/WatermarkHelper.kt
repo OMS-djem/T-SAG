@@ -113,6 +113,16 @@ object WatermarkHelper {
             workingBitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
         }
 
+        // Automatically inject GPS coordinates and site audit details into image EXIF metadata
+        ExifMetadataHelper.writeExifGpsMetadata(
+            file = outputFile,
+            gps = gps,
+            siteId = siteId,
+            operator = operator,
+            status = status,
+            gsm = gsm
+        )
+
         outputFile
     }
 

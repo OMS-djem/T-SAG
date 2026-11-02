@@ -1097,7 +1097,7 @@ fun SiteAuditDetailDialog(
                 if (photoList.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Evidence Photos (${photoList.size})",
+                        text = "Evidence Photos (${photoList.size}) • EXIF GPS Embedded ✓",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold
                     )

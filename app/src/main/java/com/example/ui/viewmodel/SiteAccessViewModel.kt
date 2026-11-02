@@ -18,8 +18,13 @@ import com.example.data.model.TelecomSiteEntity
 import com.example.data.model.UserEntity
 import com.example.data.model.UserRole
 import com.example.data.remote.FirestoreRepository
+import com.example.email.AuditReportPayload
 import com.example.email.EmailHelper
+import com.example.email.ZohoMailConfig
+import com.example.email.ZohoMailRepository
+import com.example.email.ZohoMailResult
 import com.example.email.ZohoSmtpClient
+import android.net.Uri
 import com.example.location.GpsManager
 import com.example.network.NetworkMonitor
 import com.example.security.SecurityHelper
@@ -78,6 +83,9 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     )
     val zohoHost = MutableStateFlow(prefs.getString("zoho_host", ZohoSmtpClient.DEFAULT_ZOHO_HOST) ?: ZohoSmtpClient.DEFAULT_ZOHO_HOST)
     val zohoPort = MutableStateFlow(prefs.getInt("zoho_port", ZohoSmtpClient.DEFAULT_ZOHO_PORT))
+    val zohoApiToken = MutableStateFlow(prefs.getString("zoho_api_token", "") ?: "")
+    val zohoAccountId = MutableStateFlow(prefs.getString("zoho_account_id", "default") ?: "default")
+    val zohoMailRepository = ZohoMailRepository()
 
     // Administrator Security Lock
     val isAdminUnlocked = MutableStateFlow(false)
@@ -851,30 +859,83 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             _isProcessingPhoto.value = true
             try {
+                // Synchronously query Location Services API for precise real-time GPS coordinates at the moment of photo capture
+                val liveGps = try {
+                    gpsManager.getCurrentLocation()
+                } catch (e: Exception) {
+                    _gpsData.value
+                }
+                _gpsData.value = liveGps
+
+                // Retrieve live cellular network metrics (RSRP, Cell ID, LAC/TAC, Network type)
+                val liveCell = try {
+                    com.example.telephony.CellularMonitoringService.getLatestGsmData()
+                } catch (e: Exception) {
+                    _gsmData.value
+                }
+                _gsmData.value = liveCell
+
                 val stampedFile = WatermarkHelper.createStampedPhoto(
                     context = getApplication(),
                     sourceBitmap = bitmap,
                     siteId = siteId.value,
                     operator = operator.value,
                     status = status.value,
-                    gps = _gpsData.value,
-                    gsm = _gsmData.value,
+                    gps = liveGps,
+                    gsm = liveCell,
                     tag = tag
                 )
+
+                // Inject EXIF metadata with exact GPS coordinates and cellular parameters
+                com.example.camera.ExifMetadataHelper.writeExifGpsMetadata(
+                    file = stampedFile,
+                    gps = liveGps,
+                    siteId = siteId.value,
+                    operator = operator.value,
+                    status = status.value,
+                    gsm = liveCell
+                )
+
                 val newPhoto = SitePhoto(
                     id = stampedFile.name,
                     filePath = stampedFile.absolutePath,
                     tag = tag,
+                    equipmentCategory = tag,
                     timestamp = System.currentTimeMillis(),
-                    latitude = _gpsData.value.latitude,
-                    longitude = _gpsData.value.longitude,
-                    cellId = _gsmData.value.cellId
+                    latitude = liveGps.latitude,
+                    longitude = liveGps.longitude,
+                    altitude = liveGps.altitude,
+                    accuracy = liveGps.accuracy,
+                    cellId = liveCell.cellId,
+                    rsrpDbm = liveCell.rsrpDbm ?: liveCell.signalDbm,
+                    uriString = Uri.fromFile(stampedFile).toString()
                 )
                 _photos.value = _photos.value + newPhoto
                 _lastCapturedPhoto.value = newPhoto
-                _userMessage.value = "Photo captured & geo-stamped successfully!"
+                _userMessage.value = "Photo captured & geo-stamped! Lat: ${String.format(java.util.Locale.US, "%.5f", liveGps.latitude)}, Lon: ${String.format(java.util.Locale.US, "%.5f", liveGps.longitude)}"
             } catch (e: Exception) {
                 _userMessage.value = "Error stamping photo: ${e.localizedMessage}"
+            } finally {
+                _isProcessingPhoto.value = false
+            }
+        }
+    }
+
+    fun addPhotoFromUri(uri: Uri, tag: String = "Equipment Photo") {
+        viewModelScope.launch {
+            _isProcessingPhoto.value = true
+            try {
+                val context = getApplication<Application>()
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                if (bitmap != null) {
+                    addPhotoBitmap(bitmap, tag)
+                } else {
+                    _userMessage.value = "Unable to decode selected equipment photo."
+                }
+            } catch (e: Exception) {
+                _userMessage.value = "Error processing equipment photo: ${e.localizedMessage}"
             } finally {
                 _isProcessingPhoto.value = false
             }
@@ -885,27 +946,56 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             _isProcessingPhoto.value = true
             try {
+                val liveGps = try {
+                    gpsManager.getCurrentLocation()
+                } catch (e: Exception) {
+                    _gpsData.value
+                }
+                _gpsData.value = liveGps
+
+                val liveCell = try {
+                    com.example.telephony.CellularMonitoringService.getLatestGsmData()
+                } catch (e: Exception) {
+                    _gsmData.value
+                }
+                _gsmData.value = liveCell
+
                 val stampedFile = WatermarkHelper.createSyntheticSitePhoto(
                     context = getApplication(),
                     siteId = siteId.value,
                     operator = operator.value,
                     status = status.value,
-                    gps = _gpsData.value,
-                    gsm = _gsmData.value,
+                    gps = liveGps,
+                    gsm = liveCell,
                     tag = tag
                 )
+
+                com.example.camera.ExifMetadataHelper.writeExifGpsMetadata(
+                    file = stampedFile,
+                    gps = liveGps,
+                    siteId = siteId.value,
+                    operator = operator.value,
+                    status = status.value,
+                    gsm = liveCell
+                )
+
                 val newPhoto = SitePhoto(
                     id = stampedFile.name,
                     filePath = stampedFile.absolutePath,
                     tag = tag,
+                    equipmentCategory = tag,
                     timestamp = System.currentTimeMillis(),
-                    latitude = _gpsData.value.latitude,
-                    longitude = _gpsData.value.longitude,
-                    cellId = _gsmData.value.cellId
+                    latitude = liveGps.latitude,
+                    longitude = liveGps.longitude,
+                    altitude = liveGps.altitude,
+                    accuracy = liveGps.accuracy,
+                    cellId = liveCell.cellId,
+                    rsrpDbm = liveCell.rsrpDbm ?: liveCell.signalDbm,
+                    uriString = Uri.fromFile(stampedFile).toString()
                 )
                 _photos.value = _photos.value + newPhoto
                 _lastCapturedPhoto.value = newPhoto
-                _userMessage.value = "Field inspection photo stamped ($tag)"
+                _userMessage.value = "Equipment photo stamped ($tag)"
             } catch (e: Exception) {
                 _userMessage.value = "Error adding photo: ${e.localizedMessage}"
             } finally {
@@ -1079,64 +1169,87 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
         return ccRecipientsEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }
     }
 
-    // Direct Zoho SMTP Email Sending with Offline Queue Fallback & Group Mail
+    fun getAuditReportPayload(): AuditReportPayload {
+        return AuditReportPayload(
+            siteId = siteId.value.ifBlank { "SITE-UNKNOWN" },
+            siteName = siteName.value.ifBlank { "Site" },
+            operator = operator.value.ifBlank { "Telecom" },
+            status = status.value,
+            refusalReason = refusalReason.value,
+            notes = notes.value,
+            technicianName = technicianName.value,
+            technicianPhone = technicianPhone.value,
+            recipientEmail = recipientEmail.value,
+            ccEmails = getCcList(),
+            gps = _gpsData.value,
+            gsm = _gsmData.value,
+            photos = _photos.value
+        )
+    }
+
+    fun setZohoApiToken(token: String) {
+        zohoApiToken.value = token
+        prefs.edit().putString("zoho_api_token", token).apply()
+    }
+
+    fun setZohoAccountId(accountId: String) {
+        zohoAccountId.value = accountId
+        prefs.edit().putString("zoho_account_id", accountId).apply()
+    }
+
+    // Service layer dispatch to Zoho Mail API with SMTP fallback & local Room offline queueing
     fun sendDirectZohoEmail() {
         viewModelScope.launch {
             _isSendingEmail.value = true
-
-            val isConnected = networkMonitor.isCurrentlyConnected()
-            if (!isConnected) {
-                // Cellular/network data is unavailable: Cache immediately in Room queue
-                val reportId = insertReportEntity(syncStatus = "PENDING", errorMsg = "Cached offline (no cellular connectivity)")
-                _isSendingEmail.value = false
-                _smtpStatusMessage.value = "Cellular connection unavailable. Site audit log #$reportId cached locally in Room storage queue.\n\nIt will automatically synchronize and send to Zoho Mail once connectivity is restored."
-                _smtpDetailedError.value = "Offline Queue active. Photos and telemetry safely saved to local database."
-                _showSendResultDialog.value = true
-                _userMessage.value = "Site audit queued locally in Room (Offline Mode) ✓"
-                return@launch
-            }
-
-            // Cellular/Internet available: Attempt transmission
-            _smtpStatusMessage.value = "Connecting to Zoho SMTP as ${zohoSenderEmail.value}..."
             _smtpDetailedError.value = null
 
-            val recipientsList = recipientEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }
-            val ccList = getCcList()
-            val subject = getPreparedSubject()
-            val body = getPreparedBody()
-            val html = getPreparedHtmlBody()
-            val attachments = getAttachedPhotoFiles()
-
-            // Save report first with SYNCING status
-            val reportId = insertReportEntity(syncStatus = "SYNCING")
-
-            val result = ZohoSmtpClient.sendEmail(
-                host = zohoHost.value,
-                port = zohoPort.value,
+            val isConnected = networkMonitor.isCurrentlyConnected()
+            val payload = getAuditReportPayload()
+            val config = ZohoMailConfig(
                 senderEmail = zohoSenderEmail.value,
-                sessionSenderName = sessionSenderName.value,
-                password = zohoPassword.value,
-                recipients = recipientsList,
-                ccRecipients = ccList,
-                subject = subject,
-                bodyText = body,
-                htmlBody = html,
-                attachments = attachments
+                senderName = sessionSenderName.value,
+                apiToken = zohoApiToken.value,
+                accountId = zohoAccountId.value,
+                smtpHost = zohoHost.value,
+                smtpPort = zohoPort.value,
+                smtpPassword = zohoPassword.value
+            )
+
+            _smtpStatusMessage.value = if (config.apiToken.isNotBlank()) {
+                "Dispatching site audit data, GPS coordinates, and photos to Zoho Mail API..."
+            } else {
+                "Connecting to Zoho Mail as ${zohoSenderEmail.value}..."
+            }
+
+            val result = zohoMailRepository.sendAuditReport(
+                payload = payload,
+                config = config,
+                isOnline = isConnected,
+                onQueueOffline = { p ->
+                    insertReportEntity(syncStatus = "PENDING", errorMsg = "Cached offline in local Room queue")
+                },
+                onUpdateReportStatus = { id, st, err, syncedAt ->
+                    dao.updateSyncStatus(id, st, err, syncedAt)
+                }
             )
 
             _isSendingEmail.value = false
             when (result) {
-                is ZohoSmtpClient.SmtpResult.Success -> {
-                    dao.updateSyncStatus(reportId, "SYNCED", null, System.currentTimeMillis())
-                    _smtpStatusMessage.value = result.message
-                    _smtpDetailedError.value = null
+                is ZohoMailResult.Success -> {
+                    _smtpStatusMessage.value = result.message + if (result.messageId != null) "\nMessage ID: ${result.messageId}" else ""
+                    _smtpDetailedError.value = "Dispatched via Zoho ${result.dispatchMethod} with complete GPS telemetry, cell metrics, and photo attachments."
                     _showSendResultDialog.value = true
-                    _userMessage.value = "Email successfully dispatched from ${zohoSenderEmail.value}!"
+                    _userMessage.value = "Site audit report sent to ${recipientEmail.value}!"
                 }
-                is ZohoSmtpClient.SmtpResult.Error -> {
-                    dao.updateSyncStatus(reportId, "FAILED", result.message, null)
+                is ZohoMailResult.OfflineQueued -> {
                     _smtpStatusMessage.value = result.message
-                    _smtpDetailedError.value = "Report stored in local queue (#$reportId) for automatic retry when network stabilizes."
+                    _smtpDetailedError.value = "Offline Queue active (#${result.localReportId}). Telemetry, GPS, and photos saved locally in Room."
+                    _showSendResultDialog.value = true
+                    _userMessage.value = "Site audit queued locally in Room (Offline Mode) ✓"
+                }
+                is ZohoMailResult.Error -> {
+                    _smtpStatusMessage.value = result.message
+                    _smtpDetailedError.value = result.details
                     _showSendResultDialog.value = true
                     _userMessage.value = "Failed to send email. Audit retained in offline queue."
                 }

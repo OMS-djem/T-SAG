@@ -387,5 +387,185 @@ class ExampleRobolectricTest {
     val poorColor = com.example.ui.components.getSignalColor(-118)
     assertEquals(androidx.compose.ui.graphics.Color(0xFFEF4444), poorColor)
   }
+
+  @Test
+  fun `test CameraX metadata creation with GPS location`() {
+    val gps = GpsData(
+      latitude = 36.753820,
+      longitude = 3.058810,
+      altitude = 65.0,
+      accuracy = 3.5f
+    )
+    val metadata = com.example.camera.ExifMetadataHelper.createCameraXMetadata(
+      gps = gps,
+      isReversedHorizontal = false
+    )
+    assertTrue(metadata.location != null)
+    assertEquals(36.753820, metadata.location!!.latitude, 0.000001)
+    assertEquals(3.058810, metadata.location!!.longitude, 0.000001)
+    assertEquals(65.0, metadata.location!!.altitude, 0.001)
+    assertEquals(3.5f, metadata.location!!.accuracy, 0.001f)
+  }
+
+  @Test
+  fun `test EXIF GPS injection into JPEG image and readback`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val testFile = java.io.File(context.cacheDir, "test_exif_photo.jpg")
+
+    // Create a simple blank bitmap and save to JPEG
+    val bitmap = android.graphics.Bitmap.createBitmap(400, 300, android.graphics.Bitmap.Config.ARGB_8888)
+    java.io.FileOutputStream(testFile).use { out ->
+      bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, out)
+    }
+
+    val gps = GpsData(
+      latitude = 36.753820,
+      longitude = 3.058810,
+      altitude = 48.0,
+      accuracy = 4.0f
+    )
+    val gsm = GsmData(
+      operatorName = "Djezzy",
+      networkType = "LTE 4G",
+      cellId = "48192",
+      lacTac = "1042"
+    )
+
+    val success = com.example.camera.ExifMetadataHelper.writeExifGpsMetadata(
+      file = testFile,
+      gps = gps,
+      siteId = "MOB-DZ-1044",
+      operator = "Mobiserve",
+      status = SiteAccessStatus.ACCORDED,
+      gsm = gsm
+    )
+    assertTrue(success)
+
+    val summary = com.example.camera.ExifMetadataHelper.readExifMetadata(testFile)
+    assertTrue(summary.hasGps)
+    assertEquals(36.753820, summary.latitude, 0.0001)
+    assertEquals(3.058810, summary.longitude, 0.0001)
+    assertEquals(48.0, summary.altitude, 0.1)
+    assertTrue(summary.description?.contains("MOB-DZ-1044") == true)
+    assertTrue(summary.software?.contains("Mobiserve") == true)
+    assertTrue(summary.coordinatesString.contains("36.75382° N"))
+  }
+
+  @Test
+  fun `test WatermarkHelper creates stamped photo with EXIF GPS metadata`() = runBlocking {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val gps = GpsData(
+      latitude = 36.718290,
+      longitude = 3.185200,
+      altitude = 55.0,
+      accuracy = 3.0f
+    )
+    val gsm = GsmData(cellId = "1042")
+
+    val photoFile = com.example.camera.WatermarkHelper.createSyntheticSitePhoto(
+      context = context,
+      siteId = "DZ-ALG-0492",
+      operator = "Ooredoo",
+      status = SiteAccessStatus.ACCORDED,
+      gps = gps,
+      gsm = gsm,
+      tag = "Tower Mast"
+    )
+
+    assertTrue(photoFile.exists())
+    assertTrue(photoFile.length() > 0)
+
+    val exif = com.example.camera.ExifMetadataHelper.readExifMetadata(photoFile)
+    assertTrue(exif.hasGps)
+    assertEquals(36.718290, exif.latitude, 0.0001)
+    assertEquals(3.185200, exif.longitude, 0.0001)
+    assertEquals(55.0, exif.altitude, 0.1)
+  }
+
+  @Test
+  fun `test ZohoMail service layer AuditReportPayload and config`() {
+    val gps = GpsData(
+      latitude = 36.754800,
+      longitude = 3.056900,
+      altitude = 48.0,
+      accuracy = 3.5f,
+      address = "Hydra Relay Station"
+    )
+    val gsm = GsmData(
+      operatorName = "Djezzy",
+      networkType = "LTE 4G",
+      cellId = "48192",
+      lacTac = "1042",
+      rsrpDbm = -85
+    )
+    val photo = com.example.data.model.SitePhoto(
+      id = "photo_1.jpg",
+      filePath = "/dummy/path/photo_1.jpg",
+      tag = "Antennas & RF Dishes",
+      equipmentCategory = "Antennas & RF Dishes",
+      latitude = 36.754800,
+      longitude = 3.056900,
+      altitude = 48.0,
+      accuracy = 3.5f,
+      cellId = "48192",
+      rsrpDbm = -85,
+      uriString = "file:///dummy/path/photo_1.jpg"
+    )
+
+    val payload = com.example.email.AuditReportPayload(
+      siteId = "MOB-ALG-1044",
+      siteName = "Hydra Telecom Tower",
+      operator = "Mobiserve",
+      status = SiteAccessStatus.ACCORDED,
+      refusalReason = null,
+      notes = "Equipment inspection complete",
+      technicianName = "M. Djemil",
+      technicianPhone = "+213 550 12 34 56",
+      recipientEmail = "mdjemil@mobiserveholding.com",
+      ccEmails = listOf("supervision@mobiserveholding.com"),
+      gps = gps,
+      gsm = gsm,
+      photos = listOf(photo)
+    )
+
+    assertEquals("MOB-ALG-1044", payload.siteId)
+    assertEquals(SiteAccessStatus.ACCORDED, payload.status)
+    assertEquals(36.754800, payload.gps.latitude, 0.0001)
+    assertEquals("48192", payload.gsm.cellId)
+    assertEquals("Antennas & RF Dishes", payload.photos.first().equipmentCategory)
+    assertEquals(36.754800, payload.photos.first().latitude, 0.0001)
+
+    val config = com.example.email.ZohoMailConfig(
+      senderEmail = "mdjemil@mobiserveholding.com",
+      apiToken = "test_token_12345",
+      accountId = "default"
+    )
+    assertEquals("test_token_12345", config.apiToken)
+    assertEquals("default", config.accountId)
+  }
+
+  @Test
+  fun `test CellularMonitoringService updates and retains live GSM telemetry`() {
+    val liveData = GsmData(
+      operatorName = "Mobilis 4G",
+      networkType = "LTE 4G",
+      mcc = "603",
+      mnc = "01",
+      lacTac = "2048",
+      cellId = "99210",
+      signalDbm = -78,
+      rsrpDbm = -78,
+      signalLevel = "Excellent (-78 dBm)"
+    )
+
+    com.example.telephony.CellularMonitoringService.updateTelemetry(liveData)
+    val readBack = com.example.telephony.CellularMonitoringService.getLatestGsmData()
+
+    assertEquals("Mobilis 4G", readBack.operatorName)
+    assertEquals("99210", readBack.cellId)
+    assertEquals("2048", readBack.lacTac)
+    assertEquals(-78, readBack.rsrpDbm)
+  }
 }
+
 
