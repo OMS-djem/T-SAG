@@ -43,6 +43,7 @@ import com.example.ui.components.EmailPreviewDialog
 import com.example.ui.components.GpsTelemetryCard
 import com.example.ui.components.GsmTelemetryCard
 import com.example.ui.components.PhotoEvidenceSection
+import com.example.ui.components.RsrpSignalStrengthChart
 import com.example.ui.components.SendResultDialog
 import com.example.ui.components.SiteDetailsForm
 import com.example.ui.components.StatusSelectorCard
@@ -85,6 +86,7 @@ fun SiteAuditScreen(
     val isProcessingPhoto by viewModel.isProcessingPhoto.collectAsState()
     val showPreview by viewModel.showEmailPreview.collectAsState()
     val userMessage by viewModel.userMessage.collectAsState()
+    val historyReports by viewModel.historyReports.collectAsState()
 
     // Permissions launcher
     val permissionsLauncher = rememberLauncherForActivityResult(
@@ -213,6 +215,14 @@ fun SiteAuditScreen(
             gsm = gsmData,
             isRefreshing = isRefreshingGsm,
             onRefresh = { viewModel.refreshGsm() }
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 5. Signal Strength History (RSRP) Line Chart
+        RsrpSignalStrengthChart(
+            reports = historyReports,
+            modifier = Modifier.fillMaxWidth()
         )
 
         Spacer(modifier = Modifier.height(14.dp))

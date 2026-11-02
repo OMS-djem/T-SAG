@@ -51,6 +51,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Service for cellular telemetry, RSRP, and cell tower monitoring -->
+        <service
+            android:name=".telephony.CellularMonitoringService"
+            android:exported="false" />
     </application>
 
 </manifest>

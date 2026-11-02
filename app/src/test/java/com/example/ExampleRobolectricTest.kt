@@ -313,4 +313,79 @@ class ExampleRobolectricTest {
     assertEquals("REFUSED", updated?.accessStatus)
     assertEquals("Guard permit expired", updated?.refusalReason)
   }
+
+  @Test
+  fun `test cellular telemetry RSRP formatting and email body output`() {
+    val gsm = GsmData(
+      operatorName = "Djezzy LTE",
+      networkType = "LTE 4G",
+      mcc = "603",
+      mnc = "02",
+      lacTac = "1042",
+      cellId = "48192",
+      signalDbm = -82,
+      rsrpDbm = -82,
+      signalLevel = "Good (-82 dBm)"
+    )
+    assertEquals("-82 dBm", gsm.rsrpDisplay)
+    assertTrue(gsm.summaryString.contains("RSRP: -82 dBm"))
+    assertTrue(gsm.summaryString.contains("CID: 48192"))
+
+    val gps = GpsData(latitude = 36.7538, longitude = 3.0588, accuracy = 4.0f)
+    val body = EmailHelper.generateBody(
+      siteId = "MOB-DZ-1044",
+      siteName = "Algiers Hydra Relay",
+      operator = "Mobiserve",
+      status = SiteAccessStatus.ACCORDED,
+      refusalReason = null,
+      notes = "RSRP test audit",
+      technicianName = "M. Djemil",
+      technicianPhone = "+213 550 12 34 56",
+      gps = gps,
+      gsm = gsm,
+      photoCount = 1
+    )
+    assertTrue(body.contains("Signal Strength (RSRP): -82 dBm"))
+    assertTrue(body.contains("Connected Network: LTE 4G"))
+    assertTrue(body.contains("Cell ID (CID / ECI): 48192"))
+  }
+
+  @Test
+  fun `test cellular monitoring service state flow and telemetry propagation`() {
+    val testGsm = GsmData(
+      operatorName = "Ooredoo 5G",
+      networkType = "5G NR",
+      mcc = "603",
+      mnc = "03",
+      lacTac = "2048",
+      cellId = "99824",
+      signalDbm = -78,
+      rsrpDbm = -78,
+      signalLevel = "Excellent (-78 dBm)"
+    )
+    com.example.telephony.CellularMonitoringService.updateTelemetry(testGsm)
+    val latest = com.example.telephony.CellularMonitoringService.getLatestGsmData()
+    assertEquals("5G NR", latest.networkType)
+    assertEquals("Ooredoo 5G", latest.operatorName)
+    assertEquals("99824", latest.cellId)
+    assertEquals(-78, latest.signalDbm)
+    assertEquals(-78, latest.rsrpDbm)
+    assertEquals("-78 dBm", latest.rsrpDisplay)
+  }
+
+  @Test
+  fun `test rsrp signal strength classification thresholds`() {
+    val excellentColor = com.example.ui.components.getSignalColor(-80)
+    assertEquals(androidx.compose.ui.graphics.Color(0xFF10B981), excellentColor)
+
+    val goodColor = com.example.ui.components.getSignalColor(-90)
+    assertEquals(androidx.compose.ui.graphics.Color(0xFF059669), goodColor)
+
+    val fairColor = com.example.ui.components.getSignalColor(-100)
+    assertEquals(androidx.compose.ui.graphics.Color(0xFFF59E0B), fairColor)
+
+    val poorColor = com.example.ui.components.getSignalColor(-118)
+    assertEquals(androidx.compose.ui.graphics.Color(0xFFEF4444), poorColor)
+  }
 }
+

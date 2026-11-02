@@ -181,6 +181,15 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
     init {
         refreshLocation()
         refreshGsm()
+        try {
+            com.example.telephony.CellularMonitoringService.start(application)
+        } catch (_: Exception) {}
+
+        viewModelScope.launch {
+            com.example.telephony.CellularMonitoringService.cellularData.collectLatest { liveCell ->
+                _gsmData.value = liveCell
+            }
+        }
 
         // Seed default users across all requested roles if database is empty
         viewModelScope.launch {
@@ -829,6 +838,7 @@ class SiteAccessViewModel(application: Application) : AndroidViewModel(applicati
             try {
                 val cell = gsmManager.readCurrentCellInfo()
                 _gsmData.value = cell
+                com.example.telephony.CellularMonitoringService.updateTelemetry(cell)
             } catch (e: Exception) {
                 // Keep fallback
             } finally {

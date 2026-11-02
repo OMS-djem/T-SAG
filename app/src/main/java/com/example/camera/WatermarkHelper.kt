@@ -51,7 +51,7 @@ object WatermarkHelper {
             "SITE ID: ${siteId.ifBlank { "SITE-UNKNOWN" }}  |  OPERATOR: ${operator.ifBlank { "N/A" }}  |  TAG: $tag",
             "STATUS: ${if (status == SiteAccessStatus.ACCORDED) "ACCESS ACCORDED ✓" else "NO ACCESS / REFUSED ✕"}",
             "GPS: ${gps.coordinatesString} (±${String.format(Locale.US, "%.1f", gps.accuracy)}m)  |  ALT: ${String.format(Locale.US, "%.0f", gps.altitude)}m",
-            "GSM: ${gsm.networkType}  |  MCC-MNC: ${gsm.mcc}-${gsm.mnc}  |  LAC/TAC: ${gsm.lacTac}  |  CID: ${gsm.cellId}  |  ${gsm.signalDbm} dBm",
+            "GSM: ${gsm.networkType}  |  MCC-MNC: ${gsm.mcc}-${gsm.mnc}  |  LAC/TAC: ${gsm.lacTac}  |  CID: ${gsm.cellId}  |  RSRP: ${gsm.rsrpDisplay}",
             "TIMESTAMP: $timeString"
         )
 

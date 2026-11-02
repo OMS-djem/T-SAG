@@ -8,9 +8,13 @@ data class GsmData(
     val lacTac: String = "1042", // Location Area Code / Tracking Area Code
     val cellId: String = "48192", // Cell Identifier (CID / ECI)
     val signalDbm: Int = -85,
+    val rsrpDbm: Int? = -85, // Reference Signal Received Power (RSRP) in dBm for LTE / 5G NR
     val signalLevel: String = "Good",
     val isRealSensor: Boolean = false
 ) {
+    val rsrpDisplay: String
+        get() = "${rsrpDbm ?: signalDbm} dBm"
+
     val summaryString: String
-        get() = "$networkType | $operatorName | CID: $cellId | LAC/TAC: $lacTac | MCC-MNC: $mcc-$mnc | $signalDbm dBm"
+        get() = "$networkType | $operatorName | CID: $cellId | LAC/TAC: $lacTac | MCC-MNC: $mcc-$mnc | RSRP: $rsrpDisplay"
 }

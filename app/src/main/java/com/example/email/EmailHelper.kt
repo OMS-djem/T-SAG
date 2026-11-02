@@ -73,7 +73,7 @@ Please be advised that site access has been successfully ACCORDED for the teleco
 • Cell ID (CID / ECI): ${gsm.cellId}
 • Location / Tracking Area Code (LAC/TAC): ${gsm.lacTac}
 • Mobile Country / Network Code (MCC-MNC): ${gsm.mcc}-${gsm.mnc}
-• Signal Strength: ${gsm.signalDbm} dBm (${gsm.signalLevel})
+• Signal Strength (RSRP): ${gsm.rsrpDisplay} (${gsm.signalLevel})
 
 --------------------------------------------------
 2. GPS LOCATION STAMP & AUDIT TRAIL
@@ -140,7 +140,7 @@ ${if (notes.isNotBlank()) notes else "Technician arrived on-site but was unable 
 • Cell ID (CID): ${gsm.cellId}
 • LAC / TAC: ${gsm.lacTac}
 • MCC-MNC: ${gsm.mcc}-${gsm.mnc}
-• Signal: ${gsm.signalDbm} dBm (${gsm.networkType})
+• Signal Strength (RSRP): ${gsm.rsrpDisplay} (${gsm.networkType})
 
 --------------------------------------------------
 4. ATTACHED PHOTO PROOF
@@ -218,7 +218,7 @@ Escalation sent to: $DEFAULT_ZOHO_RECIPIENT
     <div class="section-title">1. Telecom Cellular & GSM Telemetry</div>
     <div class="meta-item"><span class="meta-key">Network:</span> ${gsm.networkType} (${gsm.operatorName})</div>
     <div class="meta-item"><span class="meta-key">Cell ID:</span> ${gsm.cellId} | <span class="meta-key">LAC/TAC:</span> ${gsm.lacTac}</div>
-    <div class="meta-item"><span class="meta-key">MCC-MNC:</span> ${gsm.mcc}-${gsm.mnc} | <span class="meta-key">Signal:</span> ${gsm.signalDbm} dBm (${gsm.signalLevel})</div>
+    <div class="meta-item"><span class="meta-key">MCC-MNC:</span> ${gsm.mcc}-${gsm.mnc} | <span class="meta-key">Signal (RSRP):</span> ${gsm.rsrpDisplay} (${gsm.signalLevel})</div>
 
     <div class="section-title">2. GPS Location & Audit Trail</div>
     <div class="meta-item"><span class="meta-key">Coordinates:</span> ${gps.coordinatesString} (±${String.format(Locale.US, "%.1f", gps.accuracy)} m)</div>
