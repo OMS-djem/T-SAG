@@ -1,0 +1,2029 @@
+package com.example.ui.viewmodel
+
+import android.app.Application
+import android.content.Context
+import android.graphics.Bitmap
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.auth.UserSessionManager
+import com.example.camera.WatermarkHelper
+import com.example.data.db.AppDatabase
+import com.example.data.model.FirestoreUser
+import com.example.data.model.GpsData
+import com.example.data.model.GsmData
+import com.example.data.model.SiteAccessStatus
+import com.example.data.model.SitePhoto
+import com.example.data.model.SiteReportEntity
+import com.example.data.model.TelecomSiteEntity
+import com.example.data.model.UserEntity
+import com.example.data.model.UserRole
+import com.example.data.remote.FirestoreRepository
+import com.example.email.EmailHelper
+import com.example.email.ZohoSmtpClient
+import com.example.location.GpsManager
+import com.example.network.NetworkMonitor
+import com.example.security.SecurityHelper
+import com.example.supabase.SupabaseConfig
+import com.example.supabase.SupabaseProfile
+import com.example.supabase.SupabaseSiteReport
+import com.example.telephony.GsmManager
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import java.io.File
+
+class SiteAccessViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val db = AppDatabase.getDatabase(application)
+    private val dao = db.siteReportDao()
+    private val userDao = db.userDao()
+    private val telecomSiteDao = db.telecomSiteDao()
+    private val gpsManager = GpsManager(application)
+    private val gsmManager = GsmManager(application)
+    val networkMonitor = NetworkMonitor(application)
+
+    val firestoreRepository = FirestoreRepository(application)
+    val sessionManager = UserSessionManager(application, firestoreRepository, viewModelScope)
+
+    val currentUser = sessionManager.currentUser
+    val currentProfile = sessionManager.currentProfile
+    val currentRole = sessionManager.currentRole
+
+    private val prefs = application.getSharedPreferences("mobiserve_settings", Context.MODE_PRIVATE)
+
+    // Form State
+    val siteId = MutableStateFlow("MOB-DZ-1044")
+    val siteName = MutableStateFlow("Algiers Hydra Relay")
+    val operator = MutableStateFlow("Mobiserve / Djezzy")
+    val status = MutableStateFlow(SiteAccessStatus.ACCORDED)
+    val refusalReason = MutableStateFlow("Site security guard requested regional work permit copy")
+    val notes = MutableStateFlow("Routine scheduled site audit and telecom cabinet access inspection.")
+    val technicianName = MutableStateFlow(prefs.getString("tech_name", "M. Djemil") ?: "M. Djemil")
+    val technicianPhone = MutableStateFlow(prefs.getString("tech_phone", "+213 550 12 34 56") ?: "+213 550 12 34 56")
+    val recipientEmail = MutableStateFlow(prefs.getString("recipient_email", EmailHelper.DEFAULT_ZOHO_RECIPIENT) ?: EmailHelper.DEFAULT_ZOHO_RECIPIENT)
+
+    // Admin Config: Mail Session & Group Mail State
+    val zohoSenderEmail = MutableStateFlow(prefs.getString("zoho_sender", ZohoSmtpClient.SENDER_EMAIL) ?: ZohoSmtpClient.SENDER_EMAIL)
+    val sessionSenderName = MutableStateFlow(prefs.getString("session_sender_name", "Mobiserve Field Operations NOC") ?: "Mobiserve Field Operations NOC")
+    val ccRecipientsEmail = MutableStateFlow(prefs.getString("cc_group_emails", "supervision@mobiserveholding.com, om@mobiserveholding.com") ?: "supervision@mobiserveholding.com, om@mobiserveholding.com")
+    val zohoPassword = MutableStateFlow(
+        prefs.getString("zoho_password", null)?.takeIf { it.isNotBlank() }
+            ?: SecurityHelper.getDefaultSenderPassword()
+    )
+    val zohoHost = MutableStateFlow(prefs.getString("zoho_host", ZohoSmtpClient.DEFAULT_ZOHO_HOST) ?: ZohoSmtpClient.DEFAULT_ZOHO_HOST)
+    val zohoPort = MutableStateFlow(prefs.getInt("zoho_port", ZohoSmtpClient.DEFAULT_ZOHO_PORT))
+
+    // Administrator Security Lock
+    val isAdminUnlocked = MutableStateFlow(false)
+
+    // Direct Sending State
+    private val _isSendingEmail = MutableStateFlow(false)
+    val isSendingEmail: StateFlow<Boolean> = _isSendingEmail.asStateFlow()
+
+    private val _isTestingConnection = MutableStateFlow(false)
+    val isTestingConnection: StateFlow<Boolean> = _isTestingConnection.asStateFlow()
+
+    private val _smtpStatusMessage = MutableStateFlow<String?>(null)
+    val smtpStatusMessage: StateFlow<String?> = _smtpStatusMessage.asStateFlow()
+
+    private val _smtpDetailedError = MutableStateFlow<String?>(null)
+    val smtpDetailedError: StateFlow<String?> = _smtpDetailedError.asStateFlow()
+
+    // Sensors
+    private val _gpsData = MutableStateFlow(GpsData())
+    val gpsData: StateFlow<GpsData> = _gpsData.asStateFlow()
+
+    private val _gsmData = MutableStateFlow(GsmData())
+    val gsmData: StateFlow<GsmData> = _gsmData.asStateFlow()
+
+    private val _isRefreshingGps = MutableStateFlow(false)
+    val isRefreshingGps: StateFlow<Boolean> = _isRefreshingGps.asStateFlow()
+
+    private val _isRefreshingGsm = MutableStateFlow(false)
+    val isRefreshingGsm: StateFlow<Boolean> = _isRefreshingGsm.asStateFlow()
+
+    // Photos
+    private val _photos = MutableStateFlow<List<SitePhoto>>(emptyList())
+    val photos: StateFlow<List<SitePhoto>> = _photos.asStateFlow()
+
+    private val _isProcessingPhoto = MutableStateFlow(false)
+    val isProcessingPhoto: StateFlow<Boolean> = _isProcessingPhoto.asStateFlow()
+
+    // CameraX Dedicated Screen State
+    private val _isCameraOpen = MutableStateFlow(false)
+    val isCameraOpen: StateFlow<Boolean> = _isCameraOpen.asStateFlow()
+
+    private val _activeCameraTag = MutableStateFlow("Site Entrance")
+    val activeCameraTag: StateFlow<String> = _activeCameraTag.asStateFlow()
+
+    private val _lastCapturedPhoto = MutableStateFlow<SitePhoto?>(null)
+    val lastCapturedPhoto: StateFlow<SitePhoto?> = _lastCapturedPhoto.asStateFlow()
+
+    // Status Message / Toast
+    private val _userMessage = MutableStateFlow<String?>(null)
+    val userMessage: StateFlow<String?> = _userMessage.asStateFlow()
+
+    // Email Preview Dialog
+    private val _showEmailPreview = MutableStateFlow(false)
+    val showEmailPreview: StateFlow<Boolean> = _showEmailPreview.asStateFlow()
+
+    // Direct Send Result Dialog
+    private val _showSendResultDialog = MutableStateFlow(false)
+    val showSendResultDialog: StateFlow<Boolean> = _showSendResultDialog.asStateFlow()
+
+    // Network Connectivity Flow
+    val isOnline: StateFlow<Boolean> = networkMonitor.isOnline
+        .stateIn(viewModelScope, SharingStarted.Eagerly, networkMonitor.isCurrentlyConnected())
+
+    // Queue & Sync States
+    private val _isSyncingQueue = MutableStateFlow(false)
+    val isSyncingQueue: StateFlow<Boolean> = _isSyncingQueue.asStateFlow()
+
+    val pendingQueue: StateFlow<List<SiteReportEntity>> = dao.getPendingQueue()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val pendingCount: StateFlow<Int> = dao.getPendingCount()
+        .stateIn(viewModelScope, SharingStarted.Lazily, 0)
+
+    // User Management Flow
+    val allUsers: StateFlow<List<UserEntity>> = userDao.getAllUsers()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val pendingUsers: StateFlow<List<UserEntity>> = userDao.getPendingUsers()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val pendingUserCount: StateFlow<Int> = userDao.getPendingUserCount()
+        .stateIn(viewModelScope, SharingStarted.Lazily, 0)
+
+    // Supabase Syncing States
+    private val _isSyncingSupabase = MutableStateFlow(false)
+    val isSyncingSupabase: StateFlow<Boolean> = _isSyncingSupabase.asStateFlow()
+
+    private val _supabaseStatusMessage = MutableStateFlow<String?>(null)
+    val supabaseStatusMessage: StateFlow<String?> = _supabaseStatusMessage.asStateFlow()
+
+    // History from Room
+    val historyReports: StateFlow<List<SiteReportEntity>> = dao.getAllReports()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    // Telecom Sites Directory from Room
+    val telecomSites: StateFlow<List<TelecomSiteEntity>> = telecomSiteDao.getAllSitesFlow()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val selectedSiteForMap = MutableStateFlow<TelecomSiteEntity?>(null)
+
+    init {
+        refreshLocation()
+        refreshGsm()
+
+        // Seed default users across all requested roles if database is empty
+        viewModelScope.launch {
+            if (userDao.getUserCount() == 0) {
+                userDao.insertUsers(
+                    listOf(
+                        UserEntity(
+                            name = "M. Djemil",
+                            email = "mdjemil@mobiserveholding.com",
+                            phone = "+213 550 12 34 56",
+                            role = "ADMIN",
+                            department = "Management / NOC",
+                            region = "National"
+                        ),
+                        UserEntity(
+                            name = "Karim Benali",
+                            email = "kbenali@mobiserveholding.com",
+                            phone = "+213 551 22 33 44",
+                            role = "TECHNICIAN",
+                            department = "Field Services",
+                            region = "Algiers North"
+                        ),
+                        UserEntity(
+                            name = "Samir Hadj",
+                            email = "shadj@mobiserveholding.com",
+                            phone = "+213 552 44 55 66",
+                            role = "OM",
+                            department = "Operations & Maintenance",
+                            region = "Central"
+                        ),
+                        UserEntity(
+                            name = "Amine Mansour",
+                            email = "amansour@mobiserveholding.com",
+                            phone = "+213 553 66 77 88",
+                            role = "SUPERVISION",
+                            department = "Regional Supervision",
+                            region = "Oran & West"
+                        ),
+                        UserEntity(
+                            name = "Yacine Cherif",
+                            email = "ycherif@mobiserveholding.com",
+                            phone = "+213 554 88 99 00",
+                            role = "DISPATCHER",
+                            department = "NOC Work Orders",
+                            region = "National"
+                        ),
+                        UserEntity(
+                            name = "Nadia Belkacem",
+                            email = "nbelkacem@mobiserveholding.com",
+                            phone = "+213 555 11 22 33",
+                            role = "ACQUISITION",
+                            department = "Site Acquisition & Legal",
+                            region = "National"
+                        )
+                    )
+                )
+            }
+
+            // Seed initial telecom sites directory with GPS coordinates
+            if (telecomSiteDao.getSiteCount() == 0) {
+                telecomSiteDao.insertSites(
+                    listOf(
+                        TelecomSiteEntity(
+                            siteId = "MOB-ALG-1044",
+                            siteName = "Hydra Telecom Tower",
+                            operator = "Mobiserve",
+                            latitude = 36.754800,
+                            longitude = 3.056900,
+                            altitude = 48.0,
+                            address = "Rue Djenane El Malik, Hydra, Algiers",
+                            region = "Algiers Central",
+                            siteType = "Rooftop Tower",
+                            accessStatus = "ACCORDED",
+                            accessInstructions = "Security badge & ID required at reception gate",
+                            contactPerson = "Farid Touati (Site Manager)",
+                            contactPhone = "+213 550 99 88 77"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "DJZ-ALG-0218",
+                            siteName = "Bab Ezzouar Cyberpark Mast",
+                            operator = "Djezzy",
+                            latitude = 36.721400,
+                            longitude = 3.182500,
+                            altitude = 32.0,
+                            address = "Cyberpark Sidi Abdellah / Bab Ezzouar",
+                            region = "Algiers East",
+                            siteType = "Greenfield Mast",
+                            accessStatus = "PENDING",
+                            accessInstructions = "Work permit signed by NOC required for climbing",
+                            contactPerson = "Nassim Brahimi",
+                            contactPhone = "+213 551 11 22 33"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "MOB-ALG-0512",
+                            siteName = "Kouba Plateau Central",
+                            operator = "Mobilis",
+                            latitude = 36.732800,
+                            longitude = 3.078900,
+                            altitude = 115.0,
+                            address = "Avenue des Frères Abdeslami, Kouba, Algiers",
+                            region = "Algiers South",
+                            siteType = "Monopole",
+                            accessStatus = "ACCORDED",
+                            accessInstructions = "Security gate combination code: 4492",
+                            contactPerson = "Karim Cherif",
+                            contactPhone = "+213 552 33 44 55"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "OOR-ALG-0891",
+                            siteName = "El Biar Relay Station",
+                            operator = "Ooredoo",
+                            latitude = 36.768500,
+                            longitude = 3.032100,
+                            altitude = 160.0,
+                            address = "Chemin Mackley, El Biar, Algiers",
+                            region = "Algiers West",
+                            siteType = "Rooftop Tower",
+                            accessStatus = "REFUSED",
+                            refusalReason = "Building syndicate refused roof access without 48h advance notice",
+                            accessInstructions = "Contact building manager M. Zinedine prior to arrival",
+                            contactPerson = "Zinedine Kaci",
+                            contactPhone = "+213 553 44 55 66"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "MOB-ALG-1205",
+                            siteName = "Bir Mourad Rais Monopole",
+                            operator = "Mobiserve",
+                            latitude = 36.741000,
+                            longitude = 3.051000,
+                            altitude = 78.0,
+                            address = "Route de Blida, Bir Mourad Rais, Algiers",
+                            region = "Algiers Central",
+                            siteType = "Monopole",
+                            accessStatus = "ACCORDED",
+                            accessInstructions = "Security guard M. Amine on duty 24/7",
+                            contactPerson = "Amine Djelloul",
+                            contactPhone = "+213 554 55 66 77"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "DJZ-ALG-0734",
+                            siteName = "Sidi Yahia Commercial Microcell",
+                            operator = "Djezzy",
+                            latitude = 36.758200,
+                            longitude = 3.039500,
+                            altitude = 92.0,
+                            address = "Boulevard Sidi Yahia, Hydra, Algiers",
+                            region = "Algiers Central",
+                            siteType = "Indoor Microcell",
+                            accessStatus = "PENDING",
+                            accessInstructions = "Mall engineering basement key required",
+                            contactPerson = "Sofiane Benali",
+                            contactPhone = "+213 555 66 77 88"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "MOB-OR-2104",
+                            siteName = "Oran Es-Senia Regional Hub",
+                            operator = "Mobilis",
+                            latitude = 35.631100,
+                            longitude = -0.621000,
+                            altitude = 90.0,
+                            address = "Zone Industrielle Es-Senia, Oran",
+                            region = "Oran",
+                            siteType = "Greenfield Tower",
+                            accessStatus = "ACCORDED",
+                            accessInstructions = "Escort by military liaison required on perimeter",
+                            contactPerson = "Rabah Mansouri",
+                            contactPhone = "+213 556 77 88 99"
+                        ),
+                        TelecomSiteEntity(
+                            siteId = "OOR-CST-3309",
+                            siteName = "Constantine Zouaghi Mast",
+                            operator = "Ooredoo",
+                            latitude = 36.321000,
+                            longitude = 6.615000,
+                            altitude = 650.0,
+                            address = "Plateau Zouaghi Slimane, Constantine",
+                            region = "Constantine",
+                            siteType = "Greenfield Mast",
+                            accessStatus = "PENDING",
+                            accessInstructions = "NOC work authorization code #891",
+                            contactPerson = "Tariq Merabet",
+                            contactPhone = "+213 557 88 99 00"
+                        )
+                    )
+                )
+            }
+        }
+
+        // Seed default 30-day site visit logs if report history is empty
+        viewModelScope.launch {
+            if (dao.getTotalReportCount() == 0) {
+                seedSampleMonthVisits()
+            }
+        }
+
+        // Automatic synchronization when cellular or Wi-Fi connectivity is restored
+        viewModelScope.launch {
+            var wasOffline = !networkMonitor.isCurrentlyConnected()
+            isOnline.collect { online ->
+                if (online && wasOffline) {
+                    syncPendingReports(isAutomatic = true)
+                }
+                wasOffline = !online
+            }
+        }
+
+        // Synchronize admin permissions with signed-in RBAC role
+        viewModelScope.launch {
+            currentRole.collectLatest { role ->
+                if (role == UserRole.ADMIN) {
+                    isAdminUnlocked.value = true
+                }
+            }
+        }
+
+        // Observe cloud mail configuration and sync to session state (Google Auth / Firestore)
+        viewModelScope.launch {
+            currentUser.collectLatest { user ->
+                if (user != null && user.authProvider == "GOOGLE" && Firebase.auth.currentUser != null) {
+                    try {
+                        firestoreRepository.observeMailConfig().collectLatest { config ->
+                            if (config != null) {
+                                if (config.senderEmail.isNotBlank()) zohoSenderEmail.value = config.senderEmail
+                                if (config.senderName.isNotBlank()) sessionSenderName.value = config.senderName
+                                if (config.toGroup.isNotBlank()) recipientEmail.value = config.toGroup
+                                if (config.ccGroup.isNotBlank()) ccRecipientsEmail.value = config.ccGroup
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore unauthenticated initial flow
+                    }
+                }
+            }
+        }
+
+        // Real-time synchronization of User Directory (Firestore when Google Auth, Supabase when Supabase Auth)
+        viewModelScope.launch {
+            currentUser.collectLatest { user ->
+                if (user != null && user.authProvider == "GOOGLE" && Firebase.auth.currentUser != null) {
+                    try {
+                        firestoreRepository.observeUsers().collectLatest { cloudUsers ->
+                            for (cu in cloudUsers) {
+                                if (cu.email.isNotBlank()) {
+                                    val localUsers = allUsers.value
+                                    val match = localUsers.find { it.email.equals(cu.email.trim(), ignoreCase = true) }
+                                    if (match != null) {
+                                        if (match.role != cu.role || match.name != cu.name || match.phone != cu.phone || match.department != cu.department || match.region != cu.region || match.isActive != cu.isActive) {
+                                            userDao.updateUser(
+                                                match.copy(
+                                                    name = cu.name,
+                                                    phone = cu.phone,
+                                                    role = cu.role,
+                                                    department = cu.department,
+                                                    region = cu.region,
+                                                    isActive = cu.isActive
+                                                )
+                                            )
+                                        }
+                                    } else {
+                                        userDao.insertUser(
+                                            UserEntity(
+                                                name = cu.name.ifBlank { cu.email.substringBefore("@") },
+                                                email = cu.email.trim(),
+                                                phone = cu.phone,
+                                                role = cu.role,
+                                                department = cu.department,
+                                                region = cu.region,
+                                                isActive = cu.isActive
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // Ignore if rules restriction or offline
+                    }
+                } else if (user != null && user.authProvider != "GOOGLE") {
+                    // When using Supabase or local account, trigger Supabase user directory sync only if configured
+                    if (SupabaseConfig.isConfigured(getApplication())) {
+                        try {
+                            syncUsersWithSupabase()
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        }
+    }
+
+    fun setSiteId(value: String) { siteId.value = value }
+    fun setSiteName(value: String) { siteName.value = value }
+    fun setOperator(value: String) { operator.value = value }
+    fun setStatus(value: SiteAccessStatus) { status.value = value }
+    fun setRefusalReason(value: String) { refusalReason.value = value }
+    fun setNotes(value: String) { notes.value = value }
+
+    fun setTechnicianName(value: String) {
+        technicianName.value = value
+        prefs.edit().putString("tech_name", value).apply()
+    }
+
+    fun setTechnicianPhone(value: String) {
+        technicianPhone.value = value
+        prefs.edit().putString("tech_phone", value).apply()
+    }
+
+    fun setRecipientEmail(value: String) {
+        recipientEmail.value = value
+        prefs.edit().putString("recipient_email", value).apply()
+    }
+
+    fun setCcRecipientsEmail(value: String) {
+        ccRecipientsEmail.value = value
+        prefs.edit().putString("cc_group_emails", value).apply()
+    }
+
+    fun setSessionSenderName(value: String) {
+        sessionSenderName.value = value
+        prefs.edit().putString("session_sender_name", value).apply()
+    }
+
+    fun setZohoSenderEmail(value: String) {
+        zohoSenderEmail.value = value
+        prefs.edit().putString("zoho_sender", value).apply()
+    }
+
+    fun setZohoPassword(value: String) {
+        zohoPassword.value = value
+        prefs.edit().putString("zoho_password", value).apply()
+    }
+
+    fun setZohoHost(value: String) {
+        zohoHost.value = value
+        prefs.edit().putString("zoho_host", value).apply()
+    }
+
+    fun setZohoPort(value: Int) {
+        zohoPort.value = value
+        prefs.edit().putInt("zoho_port", value).apply()
+    }
+
+    fun saveMailSettingsToCloud() {
+        viewModelScope.launch {
+            try {
+                firestoreRepository.saveMailConfig(
+                    senderEmail = zohoSenderEmail.value,
+                    senderName = sessionSenderName.value,
+                    toGroup = recipientEmail.value,
+                    ccGroup = ccRecipientsEmail.value
+                )
+                _userMessage.value = "Mail routing & sender configuration saved to cloud database!"
+            } catch (e: Exception) {
+                _userMessage.value = "Settings saved locally (${e.localizedMessage})"
+            }
+        }
+    }
+
+    fun unlockAdmin(pin: String): Boolean {
+        val ok = SecurityHelper.verifyAdminPin(pin)
+        if (ok) {
+            isAdminUnlocked.value = true
+        }
+        return ok
+    }
+
+    fun lockAdmin() {
+        isAdminUnlocked.value = false
+    }
+
+    fun addEmailToRecipientGroup(email: String) {
+        val current = recipientEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+        if (!current.contains(email.trim())) {
+            current.add(email.trim())
+            setRecipientEmail(current.joinToString(", "))
+            _userMessage.value = "Added $email to TO Mail Group"
+        } else {
+            _userMessage.value = "$email is already in TO Mail Group"
+        }
+    }
+
+    fun addEmailToCcGroup(email: String) {
+        val current = ccRecipientsEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+        if (!current.contains(email.trim())) {
+            current.add(email.trim())
+            setCcRecipientsEmail(current.joinToString(", "))
+            _userMessage.value = "Added $email to CC Mail Group"
+        } else {
+            _userMessage.value = "$email is already in CC Mail Group"
+        }
+    }
+
+    fun addRoleEmailsToCcGroup(roleCode: String) {
+        val users = allUsers.value
+        val roleEmails = users.filter { it.role.equals(roleCode, ignoreCase = true) }.map { it.email.trim() }
+        val current = ccRecipientsEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+        var addedCount = 0
+        roleEmails.forEach { email ->
+            if (email.isNotBlank() && !current.contains(email)) {
+                current.add(email)
+                addedCount++
+            }
+        }
+        if (addedCount > 0) {
+            setCcRecipientsEmail(current.joinToString(", "))
+            _userMessage.value = "Added $addedCount $roleCode user(s) to CC Group"
+        } else {
+            _userMessage.value = "All active $roleCode users are already in CC Group"
+        }
+    }
+
+    fun addRoleEmailsToToGroup(roleCode: String) {
+        val users = allUsers.value
+        val roleEmails = users.filter { it.role.equals(roleCode, ignoreCase = true) }.map { it.email.trim() }
+        val current = recipientEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }.toMutableList()
+        var addedCount = 0
+        roleEmails.forEach { email ->
+            if (email.isNotBlank() && !current.contains(email)) {
+                current.add(email)
+                addedCount++
+            }
+        }
+        if (addedCount > 0) {
+            setRecipientEmail(current.joinToString(", "))
+            _userMessage.value = "Added $addedCount $roleCode user(s) to TO Group"
+        } else {
+            _userMessage.value = "All active $roleCode users are already in TO Group"
+        }
+    }
+
+    // User CRUD & Activation Operations with Supabase & Room
+    fun createUser(name: String, email: String, phone: String, role: String, department: String, region: String, isActive: Boolean = true) {
+        viewModelScope.launch {
+            val cleanEmail = email.trim().lowercase()
+            val user = UserEntity(
+                name = name.trim(),
+                email = cleanEmail,
+                phone = phone.trim(),
+                role = role,
+                department = department.ifBlank { "Field Services" },
+                region = region.ifBlank { "National" },
+                isActive = isActive
+            )
+            val id = userDao.insertUser(user)
+            val cloudUid = "usr_${cleanEmail.hashCode()}"
+            try {
+                sessionManager.supabaseClient.upsertProfile(
+                    SupabaseProfile(
+                        id = cloudUid,
+                        name = user.name,
+                        email = user.email,
+                        phone = user.phone,
+                        role = user.role,
+                        department = user.department,
+                        region = user.region,
+                        isActive = user.isActive
+                    ),
+                    accessToken = sessionManager.accessToken.value
+                )
+                _userMessage.value = "User '${user.name}' created and synced with Supabase."
+            } catch (e: Exception) {
+                _userMessage.value = "User '${user.name}' saved to local database."
+            }
+        }
+    }
+
+    fun updateUser(user: UserEntity) {
+        viewModelScope.launch {
+            userDao.updateUser(user)
+            try {
+                sessionManager.supabaseClient.updateProfile(
+                    SupabaseProfile(
+                        id = "usr_${user.email.hashCode()}",
+                        name = user.name,
+                        email = user.email,
+                        phone = user.phone,
+                        role = user.role,
+                        department = user.department,
+                        region = user.region,
+                        isActive = user.isActive
+                    ),
+                    accessToken = sessionManager.accessToken.value
+                )
+                _userMessage.value = "User '${user.name}' updated in Supabase & local DB."
+            } catch (e: Exception) {
+                _userMessage.value = "User '${user.name}' updated locally."
+            }
+        }
+    }
+
+    fun deleteUser(user: UserEntity) {
+        viewModelScope.launch {
+            userDao.deleteUser(user)
+            try {
+                sessionManager.supabaseClient.deleteProfile("usr_${user.email.hashCode()}", user.email, sessionManager.accessToken.value)
+                _userMessage.value = "User '${user.name}' deleted."
+            } catch (e: Exception) {
+                _userMessage.value = "User '${user.name}' deleted locally."
+            }
+        }
+    }
+
+    fun activateUser(user: UserEntity, isActive: Boolean) {
+        viewModelScope.launch {
+            userDao.setUserActive(user.id, isActive)
+            try {
+                sessionManager.supabaseClient.setUserActive(
+                    profileId = "usr_${user.email.hashCode()}",
+                    email = user.email,
+                    isActive = isActive,
+                    accessToken = sessionManager.accessToken.value
+                )
+                _userMessage.value = if (isActive) "User '${user.name}' activated and authorized!" else "User '${user.name}' access revoked."
+            } catch (e: Exception) {
+                _userMessage.value = if (isActive) "User '${user.name}' activated locally." else "User '${user.name}' access revoked locally."
+            }
+        }
+    }
+
+    fun syncUsersWithSupabase() {
+        if (!SupabaseConfig.isConfigured(getApplication())) {
+            _supabaseStatusMessage.value = "Supabase not configured (Settings -> Supabase Sync)."
+            return
+        }
+        viewModelScope.launch {
+            if (_isSyncingSupabase.value) return@launch
+            _isSyncingSupabase.value = true
+            _supabaseStatusMessage.value = "Fetching users from Supabase..."
+            try {
+                val result = sessionManager.supabaseClient.fetchAllProfiles(sessionManager.accessToken.value)
+                if (result.isSuccess) {
+                    val remoteProfiles = result.getOrNull().orEmpty()
+                    var count = 0
+                    for (p in remoteProfiles) {
+                        val existing = userDao.getUserByEmail(p.email)
+                        if (existing != null) {
+                            userDao.updateUser(
+                                existing.copy(
+                                    name = p.name.ifBlank { existing.name },
+                                    phone = p.phone.ifBlank { existing.phone },
+                                    role = p.role,
+                                    department = p.department,
+                                    region = p.region,
+                                    isActive = p.isActive
+                                )
+                            )
+                        } else {
+                            userDao.insertUser(
+                                UserEntity(
+                                    name = p.name.ifBlank { p.email.substringBefore("@") },
+                                    email = p.email,
+                                    phone = p.phone,
+                                    role = p.role,
+                                    department = p.department,
+                                    region = p.region,
+                                    isActive = p.isActive
+                                )
+                            )
+                        }
+                        count++
+                    }
+                    _supabaseStatusMessage.value = "Synchronized $count profiles with Supabase!"
+                    _userMessage.value = "Supabase User Directory: $count accounts synchronized."
+                } else {
+                    val msg = result.exceptionOrNull()?.message ?: "Sync error"
+                    _supabaseStatusMessage.value = "Supabase users sync: $msg"
+                    _userMessage.value = "Supabase: $msg"
+                }
+            } catch (e: Exception) {
+                _supabaseStatusMessage.value = "Notice: ${e.localizedMessage}"
+                _userMessage.value = "Supabase: ${e.localizedMessage}"
+            } finally {
+                _isSyncingSupabase.value = false
+            }
+        }
+    }
+
+    fun syncSiteReportsWithSupabase() {
+        if (!SupabaseConfig.isConfigured(getApplication())) {
+            _supabaseStatusMessage.value = "Supabase not configured (Settings -> Supabase Sync)."
+            return
+        }
+        viewModelScope.launch {
+            if (_isSyncingSupabase.value) return@launch
+            _isSyncingSupabase.value = true
+            _supabaseStatusMessage.value = "Syncing site reports with Supabase..."
+            try {
+                val reports = dao.getPendingReportsList()
+                var uploadCount = 0
+                for (r in reports) {
+                    val res = sessionManager.supabaseClient.insertSiteReport(r, sessionManager.accessToken.value)
+                    if (res.isSuccess) uploadCount++
+                }
+                val fetchRes = sessionManager.supabaseClient.fetchSiteReports(sessionManager.accessToken.value)
+                val countInCloud = fetchRes.getOrNull()?.size ?: 0
+                _supabaseStatusMessage.value = "Site reports database synced ($uploadCount uploaded, $countInCloud in cloud)"
+                _userMessage.value = "Supabase Site DB: $uploadCount uploaded, $countInCloud in cloud"
+            } catch (e: Exception) {
+                _supabaseStatusMessage.value = "Site DB sync notice: ${e.localizedMessage}"
+                _userMessage.value = "Site DB sync: ${e.localizedMessage}"
+            } finally {
+                _isSyncingSupabase.value = false
+            }
+        }
+    }
+
+    fun selectTechnicianUser(user: UserEntity) {
+        setTechnicianName(user.name)
+        setTechnicianPhone(user.phone)
+        _userMessage.value = "Active technician set to ${user.name} (${user.role})"
+    }
+
+    fun dismissUserMessage() { _userMessage.value = null }
+    fun setShowEmailPreview(show: Boolean) { _showEmailPreview.value = show }
+    fun setShowSendResultDialog(show: Boolean) { _showSendResultDialog.value = show }
+
+    fun openCamera(tag: String = "Site Entrance") {
+        _activeCameraTag.value = tag
+        _isCameraOpen.value = true
+    }
+
+    fun closeCamera() {
+        _isCameraOpen.value = false
+    }
+
+    fun setActiveCameraTag(tag: String) {
+        _activeCameraTag.value = tag
+    }
+
+    fun refreshLocation() {
+        viewModelScope.launch {
+            _isRefreshingGps.value = true
+            try {
+                val loc = gpsManager.getCurrentLocation()
+                _gpsData.value = loc
+            } catch (e: Exception) {
+                // Keep existing or fallback
+            } finally {
+                _isRefreshingGps.value = false
+            }
+        }
+    }
+
+    fun refreshGsm() {
+        viewModelScope.launch {
+            _isRefreshingGsm.value = true
+            try {
+                val cell = gsmManager.readCurrentCellInfo()
+                _gsmData.value = cell
+            } catch (e: Exception) {
+                // Keep fallback
+            } finally {
+                _isRefreshingGsm.value = false
+            }
+        }
+    }
+
+    fun addPhotoBitmap(bitmap: Bitmap, tag: String = "Site Photo") {
+        viewModelScope.launch {
+            _isProcessingPhoto.value = true
+            try {
+                val stampedFile = WatermarkHelper.createStampedPhoto(
+                    context = getApplication(),
+                    sourceBitmap = bitmap,
+                    siteId = siteId.value,
+                    operator = operator.value,
+                    status = status.value,
+                    gps = _gpsData.value,
+                    gsm = _gsmData.value,
+                    tag = tag
+                )
+                val newPhoto = SitePhoto(
+                    id = stampedFile.name,
+                    filePath = stampedFile.absolutePath,
+                    tag = tag,
+                    timestamp = System.currentTimeMillis(),
+                    latitude = _gpsData.value.latitude,
+                    longitude = _gpsData.value.longitude,
+                    cellId = _gsmData.value.cellId
+                )
+                _photos.value = _photos.value + newPhoto
+                _lastCapturedPhoto.value = newPhoto
+                _userMessage.value = "Photo captured & geo-stamped successfully!"
+            } catch (e: Exception) {
+                _userMessage.value = "Error stamping photo: ${e.localizedMessage}"
+            } finally {
+                _isProcessingPhoto.value = false
+            }
+        }
+    }
+
+    fun addSimulatedPhoto(tag: String) {
+        viewModelScope.launch {
+            _isProcessingPhoto.value = true
+            try {
+                val stampedFile = WatermarkHelper.createSyntheticSitePhoto(
+                    context = getApplication(),
+                    siteId = siteId.value,
+                    operator = operator.value,
+                    status = status.value,
+                    gps = _gpsData.value,
+                    gsm = _gsmData.value,
+                    tag = tag
+                )
+                val newPhoto = SitePhoto(
+                    id = stampedFile.name,
+                    filePath = stampedFile.absolutePath,
+                    tag = tag,
+                    timestamp = System.currentTimeMillis(),
+                    latitude = _gpsData.value.latitude,
+                    longitude = _gpsData.value.longitude,
+                    cellId = _gsmData.value.cellId
+                )
+                _photos.value = _photos.value + newPhoto
+                _lastCapturedPhoto.value = newPhoto
+                _userMessage.value = "Field inspection photo stamped ($tag)"
+            } catch (e: Exception) {
+                _userMessage.value = "Error adding photo: ${e.localizedMessage}"
+            } finally {
+                _isProcessingPhoto.value = false
+            }
+        }
+    }
+
+    fun removePhoto(photo: SitePhoto) {
+        val file = File(photo.filePath)
+        if (file.exists()) {
+            file.delete()
+        }
+        _photos.value = _photos.value.filter { it.id != photo.id }
+    }
+
+    fun saveReportToDb(syncStatus: String = "PENDING", errorMsg: String? = null) {
+        viewModelScope.launch {
+            insertReportEntity(syncStatus, errorMsg)
+            _userMessage.value = "Site report saved to local audit history!"
+        }
+    }
+
+    suspend fun insertReportEntity(syncStatus: String = "PENDING", errorMsg: String? = null): Long {
+        val entity = SiteReportEntity(
+            siteId = siteId.value.ifBlank { "SITE-UNKNOWN" },
+            siteName = siteName.value.ifBlank { "Site" },
+            operator = operator.value.ifBlank { "Mobiserve" },
+            status = status.value.code,
+            refusalReason = if (status.value == SiteAccessStatus.REFUSED) refusalReason.value else null,
+            technicianName = technicianName.value,
+            technicianPhone = technicianPhone.value,
+            recipientEmail = recipientEmail.value,
+            notes = notes.value,
+            latitude = _gpsData.value.latitude,
+            longitude = _gpsData.value.longitude,
+            altitude = _gpsData.value.altitude,
+            accuracy = _gpsData.value.accuracy,
+            address = _gpsData.value.address,
+            gsmOperator = _gsmData.value.operatorName,
+            networkType = _gsmData.value.networkType,
+            mcc = _gsmData.value.mcc,
+            mnc = _gsmData.value.mnc,
+            lac = _gsmData.value.lacTac,
+            cellId = _gsmData.value.cellId,
+            signalDbm = _gsmData.value.signalDbm,
+            photoPaths = _photos.value.joinToString("|") { it.filePath },
+            syncStatus = syncStatus,
+            syncErrorMessage = errorMsg,
+            syncedAt = if (syncStatus == "SYNCED") System.currentTimeMillis() else null
+        )
+        val id = dao.insertReport(entity)
+        val saved = entity.copy(id = id)
+        viewModelScope.launch {
+            try {
+                telecomSiteDao.updateSiteAuditStatus(entity.siteId, entity.status, entity.refusalReason)
+            } catch (_: Exception) {}
+            try {
+                sessionManager.supabaseClient.insertSiteReport(saved, sessionManager.accessToken.value)
+            } catch (_: Exception) {}
+        }
+        return id
+    }
+
+    fun selectSiteForMap(site: TelecomSiteEntity?) {
+        selectedSiteForMap.value = site
+    }
+
+    fun selectSiteForAudit(site: TelecomSiteEntity) {
+        siteId.value = site.siteId
+        siteName.value = site.siteName
+        operator.value = site.operator
+        status.value = if (site.accessStatus.equals("REFUSED", ignoreCase = true)) {
+            SiteAccessStatus.REFUSED
+        } else {
+            SiteAccessStatus.ACCORDED
+        }
+        refusalReason.value = site.refusalReason ?: ""
+        _userMessage.value = "Selected site '${site.siteId}' for audit"
+    }
+
+    fun addNewTelecomSite(site: TelecomSiteEntity) {
+        viewModelScope.launch {
+            telecomSiteDao.insertSite(site)
+            _userMessage.value = "Site '${site.siteId}' added to map"
+            selectedSiteForMap.value = site
+        }
+    }
+
+    fun deleteReport(entity: SiteReportEntity) {
+        viewModelScope.launch {
+            dao.deleteReport(entity)
+            _userMessage.value = "Report deleted from history"
+        }
+    }
+
+    fun loadFromEntity(entity: SiteReportEntity) {
+        siteId.value = entity.siteId
+        siteName.value = entity.siteName
+        operator.value = entity.operator
+        status.value = if (entity.status == "ACCORDED") SiteAccessStatus.ACCORDED else SiteAccessStatus.REFUSED
+        refusalReason.value = entity.refusalReason ?: ""
+        notes.value = entity.notes
+        technicianName.value = entity.technicianName
+        technicianPhone.value = entity.technicianPhone
+        recipientEmail.value = entity.recipientEmail
+
+        val paths = entity.photoPaths.split("|").filter { it.isNotBlank() }
+        val loadedPhotos = paths.mapNotNull { path ->
+            val f = File(path)
+            if (f.exists()) {
+                SitePhoto(
+                    id = f.name,
+                    filePath = f.absolutePath,
+                    tag = "Archived Photo",
+                    latitude = entity.latitude,
+                    longitude = entity.longitude,
+                    cellId = entity.cellId
+                )
+            } else null
+        }
+        _photos.value = loadedPhotos
+        _userMessage.value = "Loaded site report #${entity.id} (${entity.siteId})"
+    }
+
+    fun getPreparedSubject(): String {
+        return EmailHelper.generateSubject(
+            siteId = siteId.value,
+            operator = operator.value,
+            status = status.value
+        )
+    }
+
+    fun getPreparedBody(): String {
+        return EmailHelper.generateBody(
+            siteId = siteId.value,
+            siteName = siteName.value,
+            operator = operator.value,
+            status = status.value,
+            refusalReason = refusalReason.value,
+            notes = notes.value,
+            technicianName = technicianName.value,
+            technicianPhone = technicianPhone.value,
+            gps = _gpsData.value,
+            gsm = _gsmData.value,
+            photoCount = _photos.value.size
+        )
+    }
+
+    fun getPreparedHtmlBody(): String {
+        return EmailHelper.generateHtmlBody(
+            siteId = siteId.value,
+            siteName = siteName.value,
+            operator = operator.value,
+            status = status.value,
+            refusalReason = refusalReason.value,
+            notes = notes.value,
+            technicianName = technicianName.value,
+            technicianPhone = technicianPhone.value,
+            gps = _gpsData.value,
+            gsm = _gsmData.value,
+            photoCount = _photos.value.size
+        )
+    }
+
+    fun getAttachedPhotoFiles(): List<File> {
+        return _photos.value.map { File(it.filePath) }.filter { it.exists() }
+    }
+
+    fun getCcList(): List<String> {
+        return ccRecipientsEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }
+    }
+
+    // Direct Zoho SMTP Email Sending with Offline Queue Fallback & Group Mail
+    fun sendDirectZohoEmail() {
+        viewModelScope.launch {
+            _isSendingEmail.value = true
+
+            val isConnected = networkMonitor.isCurrentlyConnected()
+            if (!isConnected) {
+                // Cellular/network data is unavailable: Cache immediately in Room queue
+                val reportId = insertReportEntity(syncStatus = "PENDING", errorMsg = "Cached offline (no cellular connectivity)")
+                _isSendingEmail.value = false
+                _smtpStatusMessage.value = "Cellular connection unavailable. Site audit log #$reportId cached locally in Room storage queue.\n\nIt will automatically synchronize and send to Zoho Mail once connectivity is restored."
+                _smtpDetailedError.value = "Offline Queue active. Photos and telemetry safely saved to local database."
+                _showSendResultDialog.value = true
+                _userMessage.value = "Site audit queued locally in Room (Offline Mode) ✓"
+                return@launch
+            }
+
+            // Cellular/Internet available: Attempt transmission
+            _smtpStatusMessage.value = "Connecting to Zoho SMTP as ${zohoSenderEmail.value}..."
+            _smtpDetailedError.value = null
+
+            val recipientsList = recipientEmail.value.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }
+            val ccList = getCcList()
+            val subject = getPreparedSubject()
+            val body = getPreparedBody()
+            val html = getPreparedHtmlBody()
+            val attachments = getAttachedPhotoFiles()
+
+            // Save report first with SYNCING status
+            val reportId = insertReportEntity(syncStatus = "SYNCING")
+
+            val result = ZohoSmtpClient.sendEmail(
+                host = zohoHost.value,
+                port = zohoPort.value,
+                senderEmail = zohoSenderEmail.value,
+                sessionSenderName = sessionSenderName.value,
+                password = zohoPassword.value,
+                recipients = recipientsList,
+                ccRecipients = ccList,
+                subject = subject,
+                bodyText = body,
+                htmlBody = html,
+                attachments = attachments
+            )
+
+            _isSendingEmail.value = false
+            when (result) {
+                is ZohoSmtpClient.SmtpResult.Success -> {
+                    dao.updateSyncStatus(reportId, "SYNCED", null, System.currentTimeMillis())
+                    _smtpStatusMessage.value = result.message
+                    _smtpDetailedError.value = null
+                    _showSendResultDialog.value = true
+                    _userMessage.value = "Email successfully dispatched from ${zohoSenderEmail.value}!"
+                }
+                is ZohoSmtpClient.SmtpResult.Error -> {
+                    dao.updateSyncStatus(reportId, "FAILED", result.message, null)
+                    _smtpStatusMessage.value = result.message
+                    _smtpDetailedError.value = "Report stored in local queue (#$reportId) for automatic retry when network stabilizes."
+                    _showSendResultDialog.value = true
+                    _userMessage.value = "Failed to send email. Audit retained in offline queue."
+                }
+            }
+        }
+    }
+
+    // Automatic or manual synchronization of all queued offline reports
+    fun syncPendingReports(isAutomatic: Boolean = false) {
+        viewModelScope.launch {
+            if (_isSyncingQueue.value) return@launch
+            if (!networkMonitor.isCurrentlyConnected()) {
+                if (!isAutomatic) {
+                    _userMessage.value = "Cannot sync: Cellular / network data is currently offline."
+                }
+                return@launch
+            }
+
+            val pendingList = dao.getPendingReportsList()
+            if (pendingList.isEmpty()) {
+                if (!isAutomatic) {
+                    _userMessage.value = "All site access audits are already synced to Zoho Mail!"
+                }
+                return@launch
+            }
+
+            _isSyncingQueue.value = true
+            var syncedCount = 0
+            val ccList = getCcList()
+
+            for (report in pendingList) {
+                dao.updateSyncStatus(report.id, "SYNCING", null, null)
+
+                val recipients = report.recipientEmail.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }
+                val accessStatus = if (report.status == "ACCORDED") SiteAccessStatus.ACCORDED else SiteAccessStatus.REFUSED
+                val subject = EmailHelper.generateSubject(report.siteId, report.operator, accessStatus)
+
+                val photoFiles = report.photoPaths.split("|")
+                    .filter { it.isNotBlank() }
+                    .map { File(it) }
+                    .filter { it.exists() }
+
+                val body = EmailHelper.generateBody(
+                    siteId = report.siteId,
+                    siteName = report.siteName,
+                    operator = report.operator,
+                    status = accessStatus,
+                    refusalReason = report.refusalReason,
+                    notes = report.notes + "\n[Offline Queue Synced at: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}]",
+                    technicianName = report.technicianName,
+                    technicianPhone = report.technicianPhone,
+                    gps = GpsData(
+                        latitude = report.latitude,
+                        longitude = report.longitude,
+                        altitude = report.altitude,
+                        accuracy = report.accuracy,
+                        address = report.address
+                    ),
+                    gsm = GsmData(
+                        operatorName = report.gsmOperator,
+                        networkType = report.networkType,
+                        mcc = report.mcc,
+                        mnc = report.mnc,
+                        lacTac = report.lac,
+                        cellId = report.cellId,
+                        signalDbm = report.signalDbm
+                    ),
+                    photoCount = photoFiles.size
+                )
+
+                val html = EmailHelper.generateHtmlBody(
+                    siteId = report.siteId,
+                    siteName = report.siteName,
+                    operator = report.operator,
+                    status = accessStatus,
+                    refusalReason = report.refusalReason,
+                    notes = report.notes,
+                    technicianName = report.technicianName,
+                    technicianPhone = report.technicianPhone,
+                    gps = GpsData(
+                        latitude = report.latitude,
+                        longitude = report.longitude,
+                        altitude = report.altitude,
+                        accuracy = report.accuracy,
+                        address = report.address
+                    ),
+                    gsm = GsmData(
+                        operatorName = report.gsmOperator,
+                        networkType = report.networkType,
+                        mcc = report.mcc,
+                        mnc = report.mnc,
+                        lacTac = report.lac,
+                        cellId = report.cellId,
+                        signalDbm = report.signalDbm
+                    ),
+                    photoCount = photoFiles.size
+                )
+
+                val result = ZohoSmtpClient.sendEmail(
+                    host = zohoHost.value,
+                    port = zohoPort.value,
+                    senderEmail = zohoSenderEmail.value,
+                    sessionSenderName = sessionSenderName.value,
+                    password = zohoPassword.value,
+                    recipients = recipients,
+                    ccRecipients = ccList,
+                    subject = subject,
+                    bodyText = body,
+                    htmlBody = html,
+                    attachments = photoFiles
+                )
+
+                if (result is ZohoSmtpClient.SmtpResult.Success) {
+                    dao.updateSyncStatus(report.id, "SYNCED", null, System.currentTimeMillis())
+                    syncedCount++
+                    try {
+                        sessionManager.supabaseClient.insertSiteReport(report, sessionManager.accessToken.value)
+                    } catch (_: Exception) {}
+                } else if (result is ZohoSmtpClient.SmtpResult.Error) {
+                    dao.updateSyncStatus(report.id, "FAILED", result.message, null)
+                }
+            }
+
+            _isSyncingQueue.value = false
+            if (syncedCount > 0) {
+                _userMessage.value = if (isAutomatic)
+                    "Auto-sync complete: $syncedCount queued audit(s) synced to Zoho Mail!"
+                else
+                    "Successfully synced $syncedCount audit report(s) to Zoho Mail!"
+            }
+        }
+    }
+
+    // Sync a single report from the history list
+    fun syncSingleReport(report: SiteReportEntity) {
+        viewModelScope.launch {
+            if (!networkMonitor.isCurrentlyConnected()) {
+                _userMessage.value = "Cannot sync: Cellular data is offline. Will auto-sync when restored."
+                return@launch
+            }
+
+            dao.updateSyncStatus(report.id, "SYNCING", null, null)
+
+            val recipients = report.recipientEmail.split(",", ";").map { it.trim() }.filter { it.isNotBlank() }
+            val ccList = getCcList()
+            val accessStatus = if (report.status == "ACCORDED") SiteAccessStatus.ACCORDED else SiteAccessStatus.REFUSED
+            val subject = EmailHelper.generateSubject(report.siteId, report.operator, accessStatus)
+
+            val photoFiles = report.photoPaths.split("|")
+                .filter { it.isNotBlank() }
+                .map { File(it) }
+                .filter { it.exists() }
+
+            val body = EmailHelper.generateBody(
+                siteId = report.siteId,
+                siteName = report.siteName,
+                operator = report.operator,
+                status = accessStatus,
+                refusalReason = report.refusalReason,
+                notes = report.notes,
+                technicianName = report.technicianName,
+                technicianPhone = report.technicianPhone,
+                gps = GpsData(
+                    latitude = report.latitude,
+                    longitude = report.longitude,
+                    altitude = report.altitude,
+                    accuracy = report.accuracy,
+                    address = report.address
+                ),
+                gsm = GsmData(
+                    operatorName = report.gsmOperator,
+                    networkType = report.networkType,
+                    mcc = report.mcc,
+                    mnc = report.mnc,
+                    lacTac = report.lac,
+                    cellId = report.cellId,
+                    signalDbm = report.signalDbm
+                ),
+                photoCount = photoFiles.size
+            )
+
+            val html = EmailHelper.generateHtmlBody(
+                siteId = report.siteId,
+                siteName = report.siteName,
+                operator = report.operator,
+                status = accessStatus,
+                refusalReason = report.refusalReason,
+                notes = report.notes,
+                technicianName = report.technicianName,
+                technicianPhone = report.technicianPhone,
+                gps = GpsData(
+                    latitude = report.latitude,
+                    longitude = report.longitude,
+                    altitude = report.altitude,
+                    accuracy = report.accuracy,
+                    address = report.address
+                ),
+                gsm = GsmData(
+                    operatorName = report.gsmOperator,
+                    networkType = report.networkType,
+                    mcc = report.mcc,
+                    mnc = report.mnc,
+                    lacTac = report.lac,
+                    cellId = report.cellId,
+                    signalDbm = report.signalDbm
+                ),
+                photoCount = photoFiles.size
+            )
+
+            val result = ZohoSmtpClient.sendEmail(
+                host = zohoHost.value,
+                port = zohoPort.value,
+                senderEmail = zohoSenderEmail.value,
+                sessionSenderName = sessionSenderName.value,
+                password = zohoPassword.value,
+                recipients = recipients,
+                ccRecipients = ccList,
+                subject = subject,
+                bodyText = body,
+                htmlBody = html,
+                attachments = photoFiles
+            )
+
+            when (result) {
+                is ZohoSmtpClient.SmtpResult.Success -> {
+                    dao.updateSyncStatus(report.id, "SYNCED", null, System.currentTimeMillis())
+                    _userMessage.value = "Report #${report.id} (${report.siteId}) successfully synced to Zoho Mail!"
+                }
+                is ZohoSmtpClient.SmtpResult.Error -> {
+                    dao.updateSyncStatus(report.id, "FAILED", result.message, null)
+                    _userMessage.value = "Sync failed: ${result.message}"
+                }
+            }
+        }
+    }
+
+    fun testZohoConnection() {
+        viewModelScope.launch {
+            _isTestingConnection.value = true
+            _smtpStatusMessage.value = "Testing authentication with Zoho SMTP..."
+            _smtpDetailedError.value = null
+
+            val result = ZohoSmtpClient.testConnection(
+                host = zohoHost.value,
+                port = zohoPort.value,
+                senderEmail = zohoSenderEmail.value,
+                password = zohoPassword.value
+            )
+
+            _isTestingConnection.value = false
+            when (result) {
+                is ZohoSmtpClient.SmtpResult.Success -> {
+                    _smtpStatusMessage.value = result.message
+                    _smtpDetailedError.value = null
+                    _showSendResultDialog.value = true
+                    _userMessage.value = "Zoho SMTP Connection verified successfully!"
+                }
+                is ZohoSmtpClient.SmtpResult.Error -> {
+                    _smtpStatusMessage.value = result.message
+                    _smtpDetailedError.value = result.details
+                    _showSendResultDialog.value = true
+                    _userMessage.value = "Zoho Authentication test failed."
+                }
+            }
+        }
+    }
+
+    fun seedSampleMonthVisits() {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val dayMs = 86_400_000L
+            val sampleReports = listOf(
+                SiteReportEntity(
+                    siteId = "DZ-ALG-0492",
+                    siteName = "Hydra Rooftop Alpha",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Karim Benali",
+                    technicianPhone = "+213 551 22 33 44",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Monthly feeder & RRU preventive inspection. All cable trays grounded.",
+                    latitude = 36.7456,
+                    longitude = 3.0321,
+                    altitude = 120.0,
+                    accuracy = 4.2f,
+                    address = "Rue Djemila, Hydra, Algiers",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "1204",
+                    cellId = "84210",
+                    signalDbm = -78,
+                    photoPaths = "",
+                    createdAt = now - (1 * dayMs) - 3_600_000L * 2,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (1 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ALG-0120",
+                    siteName = "Bab Ezzouar Business Park",
+                    operator = "Djezzy",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Karim Benali",
+                    technicianPhone = "+213 551 22 33 44",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Battery backup check. Replaced 2 fan modules in rectifiers.",
+                    latitude = 36.7210,
+                    longitude = 3.1890,
+                    altitude = 45.0,
+                    accuracy = 3.8f,
+                    address = "Quartier d'Affaires, Bab Ezzouar, Algiers",
+                    gsmOperator = "Djezzy",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "02",
+                    lac = "2401",
+                    cellId = "55120",
+                    signalDbm = -72,
+                    photoPaths = "",
+                    createdAt = now - (3 * dayMs) - 3_600_000L * 4,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (3 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-BLI-0315",
+                    siteName = "Boufarik Central Hub",
+                    operator = "Ooredoo",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Karim Benali",
+                    technicianPhone = "+213 551 22 33 44",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Microwave link realignment with Chiffa station.",
+                    latitude = 36.5750,
+                    longitude = 2.9120,
+                    altitude = 85.0,
+                    accuracy = 5.1f,
+                    address = "Zone Industrielle, Boufarik, Blida",
+                    gsmOperator = "Ooredoo",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "03",
+                    lac = "3105",
+                    cellId = "99014",
+                    signalDbm = -81,
+                    photoPaths = "",
+                    createdAt = now - (6 * dayMs) - 3_600_000L * 1,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (6 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ALG-0492",
+                    siteName = "Hydra Rooftop Alpha",
+                    operator = "Mobilis",
+                    status = "REFUSED",
+                    refusalReason = "Building owner requested updated security clearance pass.",
+                    technicianName = "Karim Benali",
+                    technicianPhone = "+213 551 22 33 44",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Access blocked by building superintendent.",
+                    latitude = 36.7456,
+                    longitude = 3.0321,
+                    altitude = 120.0,
+                    accuracy = 4.0f,
+                    address = "Rue Djemila, Hydra, Algiers",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "1204",
+                    cellId = "84210",
+                    signalDbm = -78,
+                    photoPaths = "",
+                    createdAt = now - (10 * dayMs) - 3_600_000L * 5,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (10 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ALG-0120",
+                    siteName = "Bab Ezzouar Business Park",
+                    operator = "Djezzy",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Karim Benali",
+                    technicianPhone = "+213 551 22 33 44",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Emergency air conditioner maintenance in shelter.",
+                    latitude = 36.7210,
+                    longitude = 3.1890,
+                    altitude = 45.0,
+                    accuracy = 3.5f,
+                    address = "Quartier d'Affaires, Bab Ezzouar, Algiers",
+                    gsmOperator = "Djezzy",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "02",
+                    lac = "2401",
+                    cellId = "55120",
+                    signalDbm = -70,
+                    photoPaths = "",
+                    createdAt = now - (14 * dayMs) - 3_600_000L * 3,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (14 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-BLI-0315",
+                    siteName = "Boufarik Central Hub",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Karim Benali",
+                    technicianPhone = "+213 551 22 33 44",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Routine tower light inspection and generator fuel top up.",
+                    latitude = 36.5750,
+                    longitude = 2.9120,
+                    altitude = 85.0,
+                    accuracy = 4.8f,
+                    address = "Zone Industrielle, Boufarik, Blida",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "3105",
+                    cellId = "99014",
+                    signalDbm = -80,
+                    photoPaths = "",
+                    createdAt = now - (21 * dayMs) - 3_600_000L * 2,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (21 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ORN-1024",
+                    siteName = "Es-Senia Industrial Hub",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Amine Mansour",
+                    technicianPhone = "+213 553 66 77 88",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "5G AAU antenna integration and azimuth verification.",
+                    latitude = 35.6420,
+                    longitude = -0.6120,
+                    altitude = 90.0,
+                    accuracy = 3.2f,
+                    address = "Zone Industrielle Es-Senia, Oran",
+                    gsmOperator = "Mobilis",
+                    networkType = "5G NR",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "4102",
+                    cellId = "10420",
+                    signalDbm = -65,
+                    photoPaths = "",
+                    createdAt = now - (2 * dayMs) - 3_600_000L * 3,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (2 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ORN-1024",
+                    siteName = "Es-Senia Industrial Hub",
+                    operator = "Ooredoo",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Amine Mansour",
+                    technicianPhone = "+213 553 66 77 88",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Co-location fiber patch panel inspection and cleaning.",
+                    latitude = 35.6420,
+                    longitude = -0.6120,
+                    altitude = 90.0,
+                    accuracy = 3.5f,
+                    address = "Zone Industrielle Es-Senia, Oran",
+                    gsmOperator = "Ooredoo",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "03",
+                    lac = "4102",
+                    cellId = "10421",
+                    signalDbm = -68,
+                    photoPaths = "",
+                    createdAt = now - (5 * dayMs) - 3_600_000L * 5,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (5 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ORN-1024",
+                    siteName = "Es-Senia Industrial Hub",
+                    operator = "Djezzy",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Amine Mansour",
+                    technicianPhone = "+213 553 66 77 88",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "VSWR measurement on sector 2 antenna.",
+                    latitude = 35.6420,
+                    longitude = -0.6120,
+                    altitude = 90.0,
+                    accuracy = 4.1f,
+                    address = "Zone Industrielle Es-Senia, Oran",
+                    gsmOperator = "Djezzy",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "02",
+                    lac = "4102",
+                    cellId = "10422",
+                    signalDbm = -74,
+                    photoPaths = "",
+                    createdAt = now - (12 * dayMs) - 3_600_000L * 1,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (12 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ORN-1024",
+                    siteName = "Es-Senia Industrial Hub",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Amine Mansour",
+                    technicianPhone = "+213 553 66 77 88",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Scheduled bi-weekly transmission quality survey.",
+                    latitude = 35.6420,
+                    longitude = -0.6120,
+                    altitude = 90.0,
+                    accuracy = 3.9f,
+                    address = "Zone Industrielle Es-Senia, Oran",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "4102",
+                    cellId = "10420",
+                    signalDbm = -66,
+                    photoPaths = "",
+                    createdAt = now - (19 * dayMs) - 3_600_000L * 4,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (19 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ORN-1024",
+                    siteName = "Es-Senia Industrial Hub",
+                    operator = "Djezzy",
+                    status = "REFUSED",
+                    refusalReason = "Gate key held by port authority; escort not scheduled.",
+                    technicianName = "Amine Mansour",
+                    technicianPhone = "+213 553 66 77 88",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Rescheduling visit for following morning with authority escort.",
+                    latitude = 35.6420,
+                    longitude = -0.6120,
+                    altitude = 90.0,
+                    accuracy = 5.0f,
+                    address = "Zone Industrielle Es-Senia, Oran",
+                    gsmOperator = "Djezzy",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "02",
+                    lac = "4102",
+                    cellId = "10422",
+                    signalDbm = -75,
+                    photoPaths = "",
+                    createdAt = now - (26 * dayMs) - 3_600_000L * 2,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (26 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-CST-0811",
+                    siteName = "Ali Mendjeli Macro Site",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Samir Hadj",
+                    technicianPhone = "+213 552 44 55 66",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Emergency restoration after severe storm wind. Secured cabinet door.",
+                    latitude = 36.2480,
+                    longitude = 6.5710,
+                    altitude = 650.0,
+                    accuracy = 4.5f,
+                    address = "Nouvelle Ville Ali Mendjeli, Constantine",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "5108",
+                    cellId = "30811",
+                    signalDbm = -76,
+                    photoPaths = "",
+                    createdAt = now - (4 * dayMs) - 3_600_000L * 2,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (4 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-SET-0722",
+                    siteName = "Ain Oulmene Repeater",
+                    operator = "Ooredoo",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Samir Hadj",
+                    technicianPhone = "+213 552 44 55 66",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Solar power bank battery replacement and controller tuning.",
+                    latitude = 35.9180,
+                    longitude = 5.2950,
+                    altitude = 890.0,
+                    accuracy = 6.0f,
+                    address = "Col de Ain Oulmene, Setif",
+                    gsmOperator = "Ooredoo",
+                    networkType = "3G HSPA+",
+                    mcc = "603",
+                    mnc = "03",
+                    lac = "5702",
+                    cellId = "72201",
+                    signalDbm = -84,
+                    photoPaths = "",
+                    createdAt = now - (7 * dayMs) - 3_600_000L * 6,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (7 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-CST-0811",
+                    siteName = "Ali Mendjeli Macro Site",
+                    operator = "Djezzy",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Samir Hadj",
+                    technicianPhone = "+213 552 44 55 66",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Quarterly site health survey. All equipment operating within limits.",
+                    latitude = 36.2480,
+                    longitude = 6.5710,
+                    altitude = 650.0,
+                    accuracy = 3.6f,
+                    address = "Nouvelle Ville Ali Mendjeli, Constantine",
+                    gsmOperator = "Djezzy",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "02",
+                    lac = "5108",
+                    cellId = "30812",
+                    signalDbm = -71,
+                    photoPaths = "",
+                    createdAt = now - (15 * dayMs) - 3_600_000L * 3,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (15 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-SET-0722",
+                    siteName = "Ain Oulmene Repeater",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Samir Hadj",
+                    technicianPhone = "+213 552 44 55 66",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Lightning surge arrestor replacement following storm.",
+                    latitude = 35.9180,
+                    longitude = 5.2950,
+                    altitude = 890.0,
+                    accuracy = 5.2f,
+                    address = "Col de Ain Oulmene, Setif",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "5702",
+                    cellId = "72202",
+                    signalDbm = -79,
+                    photoPaths = "",
+                    createdAt = now - (23 * dayMs) - 3_600_000L * 4,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (23 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ALG-0492",
+                    siteName = "Hydra Rooftop Alpha",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Yacine Cherif",
+                    technicianPhone = "+213 554 88 99 00",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Dispatch work order #8491: Installed replacement SFP+ optical module.",
+                    latitude = 36.7456,
+                    longitude = 3.0321,
+                    altitude = 120.0,
+                    accuracy = 3.9f,
+                    address = "Rue Djemila, Hydra, Algiers",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "1204",
+                    cellId = "84210",
+                    signalDbm = -77,
+                    photoPaths = "",
+                    createdAt = now - (8 * dayMs) - 3_600_000L * 2,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (8 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ANN-0550",
+                    siteName = "Annaba Port Coastal Tower",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Yacine Cherif",
+                    technicianPhone = "+213 554 88 99 00",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Maritime band antenna preventive wash to remove sea salt spray.",
+                    latitude = 36.9020,
+                    longitude = 7.7650,
+                    altitude = 35.0,
+                    accuracy = 4.2f,
+                    address = "Zone Portuaire Quai 4, Annaba",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "2301",
+                    cellId = "55010",
+                    signalDbm = -72,
+                    photoPaths = "",
+                    createdAt = now - (11 * dayMs) - 3_600_000L * 5,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (11 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ANN-0550",
+                    siteName = "Annaba Port Coastal Tower",
+                    operator = "Djezzy",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Yacine Cherif",
+                    technicianPhone = "+213 554 88 99 00",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Transmission router firmware update and failover test.",
+                    latitude = 36.9020,
+                    longitude = 7.7650,
+                    altitude = 35.0,
+                    accuracy = 3.7f,
+                    address = "Zone Portuaire Quai 4, Annaba",
+                    gsmOperator = "Djezzy",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "02",
+                    lac = "2301",
+                    cellId = "55011",
+                    signalDbm = -69,
+                    photoPaths = "",
+                    createdAt = now - (18 * dayMs) - 3_600_000L * 1,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (18 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-BEJ-0210",
+                    siteName = "Tichy Coastal Mast",
+                    operator = "Ooredoo",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Nadia Belkacem",
+                    technicianPhone = "+213 555 11 22 33",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Site lease renewal survey and land perimeter demarcation check.",
+                    latitude = 36.6690,
+                    longitude = 5.1610,
+                    altitude = 28.0,
+                    accuracy = 4.0f,
+                    address = "Route Nationale 9, Tichy, Bejaia",
+                    gsmOperator = "Ooredoo",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "03",
+                    lac = "6201",
+                    cellId = "21004",
+                    signalDbm = -75,
+                    photoPaths = "",
+                    createdAt = now - (9 * dayMs) - 3_600_000L * 4,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (9 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-BEJ-0210",
+                    siteName = "Tichy Coastal Mast",
+                    operator = "Mobilis",
+                    status = "REFUSED",
+                    refusalReason = "Landlord disputed lease co-location annex contract; locked padlock.",
+                    technicianName = "Nadia Belkacem",
+                    technicianPhone = "+213 555 11 22 33",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Forwarded to Legal & Acquisition department for negotiation.",
+                    latitude = 36.6690,
+                    longitude = 5.1610,
+                    altitude = 28.0,
+                    accuracy = 4.5f,
+                    address = "Route Nationale 9, Tichy, Bejaia",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "6201",
+                    cellId = "21005",
+                    signalDbm = -78,
+                    photoPaths = "",
+                    createdAt = now - (16 * dayMs) - 3_600_000L * 2,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (16 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ALG-0120",
+                    siteName = "Bab Ezzouar Business Park",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "Nadia Belkacem",
+                    technicianPhone = "+213 555 11 22 33",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Additional antenna mounting clearance contract audit.",
+                    latitude = 36.7210,
+                    longitude = 3.1890,
+                    altitude = 45.0,
+                    accuracy = 3.4f,
+                    address = "Quartier d'Affaires, Bab Ezzouar, Algiers",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "2401",
+                    cellId = "55121",
+                    signalDbm = -71,
+                    photoPaths = "",
+                    createdAt = now - (22 * dayMs) - 3_600_000L * 3,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (22 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-ALG-0492",
+                    siteName = "Hydra Rooftop Alpha",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "M. Djemil",
+                    technicianPhone = "+213 550 12 34 56",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Executive quality & safety audit before client handoff.",
+                    latitude = 36.7456,
+                    longitude = 3.0321,
+                    altitude = 120.0,
+                    accuracy = 3.1f,
+                    address = "Rue Djemila, Hydra, Algiers",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "1204",
+                    cellId = "84210",
+                    signalDbm = -75,
+                    photoPaths = "",
+                    createdAt = now - (13 * dayMs) - 3_600_000L * 2,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (13 * dayMs)
+                ),
+                SiteReportEntity(
+                    siteId = "DZ-CST-0811",
+                    siteName = "Ali Mendjeli Macro Site",
+                    operator = "Mobilis",
+                    status = "ACCORDED",
+                    refusalReason = null,
+                    technicianName = "M. Djemil",
+                    technicianPhone = "+213 550 12 34 56",
+                    recipientEmail = "supervision@mobiserveholding.com",
+                    notes = "Supervisory review of regional field team operations.",
+                    latitude = 36.2480,
+                    longitude = 6.5710,
+                    altitude = 650.0,
+                    accuracy = 3.8f,
+                    address = "Nouvelle Ville Ali Mendjeli, Constantine",
+                    gsmOperator = "Mobilis",
+                    networkType = "LTE (4G)",
+                    mcc = "603",
+                    mnc = "01",
+                    lac = "5108",
+                    cellId = "30811",
+                    signalDbm = -74,
+                    photoPaths = "",
+                    createdAt = now - (27 * dayMs) - 3_600_000L * 5,
+                    syncStatus = "SYNCED",
+                    syncedAt = now - (27 * dayMs)
+                )
+            )
+
+            dao.insertReports(sampleReports)
+            _userMessage.value = "Loaded ${sampleReports.size} sample site visits across the last month."
+        }
+    }
+}
