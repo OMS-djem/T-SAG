@@ -13,7 +13,13 @@ import {
 import { StorageService } from '../services/storage';
 import { TelemetryService } from '../services/telemetry';
 import { EmailService } from '../services/email';
-import { SupabaseSiteService, isSupabaseConfigured, SUPABASE_URL } from '../services/supabase';
+import { 
+  SupabaseSiteService, 
+  isSupabaseConfigured, 
+  getSupabaseUrl, 
+  getSupabaseAnonKey, 
+  setCustomSupabaseCredentials 
+} from '../services/supabase';
 
 interface AppContextType {
   // Auth & Session
@@ -89,8 +95,13 @@ interface AppContextType {
   isSyncingSites: boolean;
   supabaseSitesStatus: string | null;
   supabaseUrl: string;
+  supabaseAnonKey: string;
   isSupabaseConnected: boolean;
   fetchSitesFromSupabase: (isManual?: boolean) => Promise<void>;
+  searchDatabaseSites: (query: string) => Promise<TelecomSite[]>;
+  fetchAndFillSite: (siteId: string) => Promise<boolean>;
+  saveCustomSupabaseConfig: (url: string, key: string) => Promise<void>;
+  testSupabaseDb: () => Promise<{ success: boolean; message: string; rowCount?: number }>;
   selectedSiteForMap: TelecomSite | null;
   selectSiteForMap: (site: TelecomSite | null) => void;
   loadSiteIntoAudit: (site: TelecomSite) => void;
@@ -205,6 +216,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [telecomSites, setTelecomSites] = useState<TelecomSite[]>(() => StorageService.getSites());
   const [isSyncingSites, setIsSyncingSites] = useState(false);
   const [supabaseSitesStatus, setSupabaseSitesStatus] = useState<string | null>(null);
+  const [supabaseUrlState, setSupabaseUrlState] = useState<string>(() => getSupabaseUrl());
+  const [supabaseAnonKeyState, setSupabaseAnonKeyState] = useState<string>(() => getSupabaseAnonKey());
   const [selectedSiteForMap, setSelectedSiteForMap] = useState<TelecomSite | null>(null);
   const [reports, setReports] = useState<SiteReport[]>(() => StorageService.getReports());
   const [allUsers, setAllUsers] = useState<UserProfile[]>(() => StorageService.getUsers());
@@ -253,6 +266,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setIsSyncingSites(false);
     }
   }, [showToast]);
+
+  const saveCustomSupabaseConfig = useCallback(async (url: string, key: string) => {
+    setCustomSupabaseCredentials(url, key);
+    setSupabaseUrlState(getSupabaseUrl());
+    setSupabaseAnonKeyState(getSupabaseAnonKey());
+    showToast('Supabase credentials saved. Re-syncing site_db...');
+    await fetchSitesFromSupabase(true);
+  }, [fetchSitesFromSupabase, showToast]);
+
+  const testSupabaseDb = useCallback(async () => {
+    return await SupabaseSiteService.testConnection();
+  }, []);
 
   // Initial fetch from Supabase site_db table on mount
   useEffect(() => {
@@ -324,9 +349,143 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setRefusalReason(site.refusalReason || 'Site access refused');
     }
     setNotes(site.accessInstructions ? `Site Instructions: ${site.accessInstructions}` : '');
+
+    // Synchronize GPS coordinates stamp with verified site position
+    if (site.latitude && site.longitude) {
+      const lat = Number(site.latitude.toFixed(6));
+      const lng = Number(site.longitude.toFixed(6));
+      setGpsData({
+        latitude: lat,
+        longitude: lng,
+        altitude: site.altitude || 48.0,
+        accuracy: 2.5,
+        address: site.address || `${site.siteName}, ${site.region}`,
+        timestamp: Date.now(),
+        coordinatesString: `${lat >= 0 ? '+' : ''}${lat.toFixed(6)}, ${lng >= 0 ? '+' : ''}${lng.toFixed(6)}`,
+        mapsUrl: `https://maps.google.com/?q=${lat},${lng}`
+      });
+    }
+
     setActiveTab('AUDIT');
-    showToast(`Loaded ${site.siteId} into Site Audit`);
+    showToast(`Loaded ${site.siteId} (${site.siteName}) from database`);
   }, [showToast]);
+
+  // Search sites in Supabase site_db table in real-time
+  const searchDatabaseSites = useCallback(async (query: string): Promise<TelecomSite[]> => {
+    const clean = query.trim();
+    if (!clean) return telecomSites;
+
+    let remoteSites: TelecomSite[] = [];
+    try {
+      const res = await SupabaseSiteService.searchSitesInDb(clean);
+      if (res.sites && res.sites.length > 0) {
+        remoteSites = res.sites;
+        // Merge any new sites into local list
+        setTelecomSites(prev => {
+          const ids = new Set(prev.map(p => p.siteId.toLowerCase()));
+          const newOnes = res.sites.filter(s => !ids.has(s.siteId.toLowerCase()));
+          if (newOnes.length > 0) {
+            const combined = [...prev, ...newOnes];
+            StorageService.saveSites(combined);
+            return combined;
+          }
+          return prev;
+        });
+      }
+    } catch {
+      // Fallback
+    }
+
+    const q = clean.toLowerCase();
+    const qNorm = q.replace(/[-_\s]/g, '');
+
+    const localFiltered = telecomSites.filter(s => {
+      const id = s.siteId.toLowerCase();
+      const name = s.siteName.toLowerCase();
+      const op = s.operator.toLowerCase();
+      const addr = s.address.toLowerCase();
+      const reg = s.region.toLowerCase();
+      return (
+        id.includes(q) ||
+        name.includes(q) ||
+        op.includes(q) ||
+        addr.includes(q) ||
+        reg.includes(q) ||
+        id.replace(/[-_\s]/g, '').includes(qNorm) ||
+        name.replace(/[-_\s]/g, '').includes(qNorm)
+      );
+    });
+
+    // Merge remote and local candidates without duplicates
+    const seenIds = new Set<string>();
+    const combined: TelecomSite[] = [];
+
+    const allCandidates = [...remoteSites, ...localFiltered];
+    allCandidates.sort((a, b) => {
+      const aId = a.siteId.toLowerCase();
+      const bId = b.siteId.toLowerCase();
+      const aName = a.siteName.toLowerCase();
+      const bName = b.siteName.toLowerCase();
+
+      if (aId === q && bId !== q) return -1;
+      if (bId === q && aId !== q) return 1;
+      if (aId.startsWith(q) && !bId.startsWith(q)) return -1;
+      if (bId.startsWith(q) && !aId.startsWith(q)) return 1;
+      if (aName.startsWith(q) && !bName.startsWith(q)) return -1;
+      if (bName.startsWith(q) && !aName.startsWith(q)) return 1;
+      return 0;
+    });
+
+    for (const site of allCandidates) {
+      const key = site.siteId.toLowerCase();
+      if (!seenIds.has(key)) {
+        seenIds.add(key);
+        combined.push(site);
+      }
+    }
+
+    return combined;
+  }, [telecomSites]);
+
+  // Fetch and auto-populate site by code or name from Supabase site_db
+  const fetchAndFillSite = useCallback(async (code: string): Promise<boolean> => {
+    const clean = code.trim();
+    if (!clean) return false;
+
+    try {
+      // 1. Try remote Supabase PostgREST
+      let site = await SupabaseSiteService.getSiteByIdFromDb(clean);
+
+      // 2. Fallback to local directory matching code or name
+      if (!site) {
+        const q = clean.toLowerCase();
+        const qNorm = q.replace(/[-_\s]/g, '');
+        site = telecomSites.find(s => {
+          const id = s.siteId.toLowerCase();
+          const name = s.siteName.toLowerCase();
+          return (
+            id === q ||
+            id.includes(q) ||
+            id.replace(/[-_\s]/g, '').includes(qNorm) ||
+            name.includes(q) ||
+            name.replace(/[-_\s]/g, '').includes(qNorm)
+          );
+        }) || null;
+      }
+
+      if (site) {
+        loadSiteIntoAudit(site);
+        showToast(`Found and populated ${site.siteId} (${site.siteName})`);
+        return true;
+      }
+      showToast(`Site "${clean}" not found in site_db table`);
+      return false;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Error searching site_db: ${msg}`);
+      return false;
+    }
+  }, [loadSiteIntoAudit, showToast, telecomSites]);
 
   // Load past report into audit
   const loadReportIntoAudit = useCallback((report: SiteReport) => {
@@ -708,9 +867,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         telecomSites,
         isSyncingSites,
         supabaseSitesStatus,
-        supabaseUrl: SUPABASE_URL,
+        supabaseUrl: supabaseUrlState,
+        supabaseAnonKey: supabaseAnonKeyState,
         isSupabaseConnected,
         fetchSitesFromSupabase,
+        searchDatabaseSites,
+        fetchAndFillSite,
+        saveCustomSupabaseConfig,
+        testSupabaseDb,
         selectedSiteForMap,
         selectSiteForMap: setSelectedSiteForMap,
         loadSiteIntoAudit,

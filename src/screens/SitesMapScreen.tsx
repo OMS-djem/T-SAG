@@ -26,6 +26,7 @@ export const SitesMapScreen: React.FC = () => {
     telecomSites,
     isSyncingSites,
     fetchSitesFromSupabase,
+    searchDatabaseSites,
     selectedSiteForMap,
     selectSiteForMap,
     loadSiteIntoAudit,
@@ -82,6 +83,16 @@ export const SitesMapScreen: React.FC = () => {
   }, [telecomSites, gpsData.latitude, gpsData.longitude, searchQuery]);
 
   const nearestSite = sortedAndFilteredSites[0];
+
+  // Live query Supabase site_db in background when technician searches
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q || q.length < 2) return;
+    const timer = setTimeout(async () => {
+      await searchDatabaseSites(q);
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [searchQuery, searchDatabaseSites]);
 
   // Initialize Leaflet Map
   useEffect(() => {
@@ -266,7 +277,16 @@ export const SitesMapScreen: React.FC = () => {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search site ID, name, operator, or city..."
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && sortedAndFilteredSites.length > 0) {
+                const target = sortedAndFilteredSites[0];
+                if (mapInstanceRef.current) {
+                  mapInstanceRef.current.setView([target.latitude, target.longitude], 16);
+                }
+                selectSiteForMap(target);
+              }
+            }}
+            placeholder="Search site ID, name, operator, or city in site_db..."
             className="w-full text-xs bg-transparent focus:outline-hidden text-slate-800 placeholder-slate-400"
           />
           {searchQuery && (

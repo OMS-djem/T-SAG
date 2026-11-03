@@ -11,6 +11,38 @@ const STORAGE_KEYS = {
 
 export const INITIAL_SITES: TelecomSite[] = [
   {
+    id: '20692',
+    siteId: 'A16X1631',
+    siteName: 'Q35 LPP Sidi Abdellah',
+    operator: 'Mobiserve (MBS)',
+    latitude: 36.671200,
+    longitude: 2.871500,
+    altitude: 185.0,
+    address: 'Quartier 35 LPP, Nouvelle Ville Sidi Abdellah, Alger',
+    region: 'ALGER (Sidi Abdellah)',
+    siteType: 'Rooftop Tower',
+    accessStatus: 'ACCORDED',
+    accessInstructions: 'Accès conciergerie LPP Q35. Clé armoire technique avec gardien principal.',
+    contactPerson: 'Mourad Cherif (Gardien LPP Q35)',
+    contactPhone: '+213 550 35 16 31'
+  },
+  {
+    id: 'site_a16x',
+    siteId: 'A16X',
+    siteName: 'Alger Centre Pasteur Relay',
+    operator: 'Mobiserve',
+    latitude: 36.772500,
+    longitude: 3.058800,
+    altitude: 54.0,
+    address: 'Boulevard Colonel Amirouche / Pasteur, Alger Centre',
+    region: 'Algiers Central',
+    siteType: 'Rooftop Tower',
+    accessStatus: 'ACCORDED',
+    accessInstructions: 'Security check-in at main concierge. Key ref: #K-16 Pasteur',
+    contactPerson: 'Karim Benali (NOC Coordinator)',
+    contactPhone: '+213 550 16 16 16'
+  },
+  {
     id: 'site_1',
     siteId: 'MOB-ALG-1044',
     siteName: 'Hydra Telecom Tower',
@@ -341,7 +373,15 @@ export const StorageService = {
         localStorage.setItem(STORAGE_KEYS.SITES, JSON.stringify(INITIAL_SITES));
         return INITIAL_SITES;
       }
-      return JSON.parse(data);
+      const parsed: TelecomSite[] = JSON.parse(data);
+      const existingIds = new Set(parsed.map(s => s.siteId.toLowerCase()));
+      const missing = INITIAL_SITES.filter(s => !existingIds.has(s.siteId.toLowerCase()));
+      if (missing.length > 0) {
+        const merged = [...missing, ...parsed];
+        localStorage.setItem(STORAGE_KEYS.SITES, JSON.stringify(merged));
+        return merged;
+      }
+      return parsed;
     } catch {
       return INITIAL_SITES;
     }

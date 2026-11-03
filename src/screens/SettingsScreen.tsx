@@ -36,12 +36,22 @@ export const SettingsScreen: React.FC = () => {
     isSyncingSites,
     supabaseSitesStatus,
     supabaseUrl,
+    supabaseAnonKey,
     isSupabaseConnected,
     fetchSitesFromSupabase,
+    saveCustomSupabaseConfig,
+    testSupabaseDb,
     showToast
   } = useApp();
 
   const [activeSubTab, setActiveSubTab] = useState<'MAIL' | 'USERS' | 'DATABASE'>('MAIL');
+
+  // Database credentials form state
+  const [customDbUrl, setCustomDbUrl] = useState(supabaseUrl);
+  const [customDbKey, setCustomDbKey] = useState(supabaseAnonKey);
+  const [showDbKey, setShowDbKey] = useState(false);
+  const [isTestingSupabase, setIsTestingSupabase] = useState(false);
+  const [supabaseTestReport, setSupabaseTestReport] = useState<{ success: boolean; message: string; rowCount?: number } | null>(null);
 
   // Mail settings form state
   const [senderEmail, setSenderEmail] = useState(mailConfig.senderEmail);
@@ -432,41 +442,156 @@ export const SettingsScreen: React.FC = () => {
       {/* 5. Subtab Content: Database & Storage */}
       {activeSubTab === 'DATABASE' && (
         <div className="space-y-4">
-          {/* Supabase site_db sync card */}
+          {/* Supabase site_db configuration & live connection panel */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-3 gap-2">
               <div className="flex items-center space-x-2">
                 <Server className="w-5 h-5 text-emerald-600" />
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900">Supabase Cloud Database (<code className="text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded">site_db</code>)</h3>
-                  <p className="text-xs text-slate-500">Live telecom sites synchronization from Supabase PostgreSQL environment</p>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Supabase PostgreSQL Database (<code className="text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded font-mono">site_db</code>)
+                  </h3>
+                  <p className="text-xs text-slate-500">Live PostgREST synchronization and site information lookup</p>
                 </div>
               </div>
-              <button
-                type="button"
-                disabled={isSyncingSites}
-                onClick={() => fetchSitesFromSupabase(true)}
-                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center transition-colors shadow-sm disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isSyncingSites ? 'animate-spin' : ''}`} />
-                Sync from site_db
-              </button>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  disabled={isTestingSupabase}
+                  onClick={async () => {
+                    setIsTestingSupabase(true);
+                    setSupabaseTestReport(null);
+                    const res = await testSupabaseDb();
+                    setSupabaseTestReport(res);
+                    setIsTestingSupabase(false);
+                  }}
+                  className="px-3 py-1.5 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-bold flex items-center transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 mr-1.5 text-blue-600 ${isTestingSupabase ? 'animate-spin' : ''}`} />
+                  Test Connection
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSyncingSites}
+                  onClick={() => fetchSitesFromSupabase(true)}
+                  className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center transition-colors shadow-sm disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isSyncingSites ? 'animate-spin' : ''}`} />
+                  Sync All Sites
+                </button>
+              </div>
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs font-mono space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-slate-500">SUPABASE_URL:</span>
-                <span className="text-slate-900 font-bold truncate max-w-xs">{supabaseUrl}</span>
+            {/* Test Connection Result Alert */}
+            {supabaseTestReport && (
+              <div className={`p-3.5 rounded-xl border text-xs flex items-start space-x-2.5 ${
+                supabaseTestReport.success 
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                  : 'bg-amber-50 border-amber-200 text-amber-900'
+              }`}>
+                {supabaseTestReport.success ? (
+                  <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                )}
+                <div>
+                  <div className="font-bold">
+                    {supabaseTestReport.success ? 'Supabase Connection Verified' : 'Supabase Connection Notice'}
+                  </div>
+                  <div className="text-[11px] mt-0.5 leading-relaxed">{supabaseTestReport.message}</div>
+                </div>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-500">TARGET TABLE:</span>
-                <span className="text-emerald-700 font-bold">public.site_db</span>
+            )}
+
+            {/* Environment Credentials Display & Editor */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs space-y-3">
+              <div>
+                <label className="block text-slate-500 font-semibold mb-1">SUPABASE_URL (Endpoint)</label>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    value={customDbUrl}
+                    onChange={(e) => setCustomDbUrl(e.target.value)}
+                    placeholder="https://your-project.supabase.co"
+                    className="flex-1 font-mono text-xs px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-500">STATUS:</span>
-                <span className={`font-semibold ${isSupabaseConnected ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  {supabaseSitesStatus || (isSupabaseConnected ? 'Connected & Ready' : 'Configured via Environment')}
+
+              <div>
+                <label className="block text-slate-500 font-semibold mb-1">SUPABASE_ANON_KEY (Public Key)</label>
+                <div className="flex space-x-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={showDbKey ? 'text' : 'password'}
+                      value={customDbKey}
+                      onChange={(e) => setCustomDbKey(e.target.value)}
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      className="w-full font-mono text-xs px-3 py-2 pr-9 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDbKey(!showDbKey)}
+                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                    >
+                      {showDbKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                <span className="text-[11px] text-slate-500">
+                  Status: <strong className={isSupabaseConnected ? 'text-emerald-700' : 'text-amber-700'}>
+                    {supabaseSitesStatus || (isSupabaseConnected ? 'Connected & Ready' : 'Configured via Environment')}
+                  </strong>
                 </span>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await saveCustomSupabaseConfig(customDbUrl, customDbKey);
+                  }}
+                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg transition-colors text-xs"
+                >
+                  Save & Apply Credentials
+                </button>
+              </div>
+            </div>
+
+            {/* Telecom Sites Directory Preview in site_db */}
+            <div className="space-y-2 pt-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  Sites in Directory ({telecomSites.length})
+                </h4>
+                <span className="text-[10px] text-slate-500">
+                  Target Table: <code className="font-mono text-emerald-700 font-bold">public.site_db</code>
+                </span>
+              </div>
+
+              <div className="max-h-56 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 text-xs">
+                {telecomSites.map((site) => (
+                  <div key={site.id} className="p-2.5 hover:bg-slate-50 flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-mono font-bold text-slate-900">{site.siteId}</span>
+                        <span className="text-slate-700 font-semibold">{site.siteName}</span>
+                        <span className="text-[10px] text-slate-400">({site.operator})</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        📍 {site.address} • {site.latitude.toFixed(6)}, {site.longitude.toFixed(6)} • {site.siteType}
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded ${
+                      site.accessStatus === 'ACCORDED' ? 'bg-emerald-100 text-emerald-800' :
+                      site.accessStatus === 'REFUSED' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
+                    }`}>
+                      {site.accessStatus}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
